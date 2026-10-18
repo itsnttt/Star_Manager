@@ -110,6 +110,30 @@
 - 如果缩略图问题来自 `ThumbAB`，但该 `ThumbAB` 同时也是物品 `MainAB`，并且 UnityPy 无法解析可用资源，则物品和 zipmod 会被归入 `unity3d` `error`，因为这说明主资源本身不可用。
 - 删除物品会从 zipmod 中移除对应 CSV 行，并尝试移除相关 `.unity3d` 引用文件；该操作会修改 zipmod，必须走明确确认。
 
+### `unity3d_compression`
+
+触发条件：
+
+- 模组 CSV 实际依赖的 Unity3D 中，至少有一个可读资源使用 `none`（未压缩）Bundle block compression，且 `item_count > 0`、`file_size / item_count > 10 MiB`。
+
+界面标题：
+
+- `未压缩unity3d`
+
+解决方案：
+
+- 使用诊断页的 `重压缩`，将当前 zipmod 中实际引用的未压缩 Unity3D 重建为 LZMA Bundle block，并原子替换原模组后重新扫描数据库；多选模式还提供批量重压缩入口。
+
+界面表现：
+
+- 模组列表显示为 `警告`，状态筛选提供 `未压缩unity3d` 专项入口。
+- 诊断页列出受影响的 Unity3D 文件名，并提供 `重压缩` 操作；完成后显示压缩前后的模组大小和变化比例；多选模式可对已选模组批量处理，不符合阈值的模组会跳过；该状态不影响物品主资源可用性。
+
+说明：
+
+- 判断使用建库时保存的 `zipmod_unity3d_dependencies` 依赖明细，只统计 CSV 实际引用且成功识别为可读的 Unity3D；缺失、不可读和其它压缩方式不触发此警告。物品数为 0 或平均物品大小不超过 10 MiB 时不触发。
+- 修复只支持 UnityFS format 6；会保留 Bundle 的目录节点和逻辑 payload，将数据块和 block-info 使用 Unity 兼容的 LZMA raw 格式重写，再重新打包 zipmod 并刷新依赖压缩状态。无法读取、加密或非 UnityFS 资源会保留在跳过列表，不会覆盖原文件。
+
 ### `duplicate_zipmod`
 
 触发条件：
@@ -192,7 +216,7 @@
 - `正常`：`scan_status = ok`，作者不为空，没有重复 GUID，没有主资源 `unity3d` 问题，也没有缩略图问题。
 - `错误`：包括 `invalid_manifest`、`missing_manifest`、`read_error`、主资源 `MainAB` 缺失、主资源 Unity3D 损坏等会影响物品本体可用性的情况。
 - `读取失败`：`scan_status = read_error`，包括坏 ZIP 和成员解压失败。
-- `警告`：包括作者为空、Unity3D 不在当前 zipmod 内（来源为游戏目录或其它 zipmod）、重复 GUID、缩略图缺失或缩略图解析失败等需要人工整理但不一定影响物品本体可用性的情况。
+- `警告`：包括作者为空、Unity3D 不在当前 zipmod 内（来源为游戏目录或其它 zipmod）、未压缩 Unity3D、重复 GUID、缩略图缺失或缩略图解析失败等需要人工整理但不一定影响物品本体可用性的情况。
 - `已失效`：`scan_status = stale`。
 
 ## 备注

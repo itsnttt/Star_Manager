@@ -29,6 +29,17 @@ from star_manager.services import trash  # noqa: E402
 
 
 class DuplicateCleanupPolicyTests(unittest.TestCase):
+    def test_task_message_window_is_bounded(self):
+        task = bridge.TaskState(id="messages", task_type="import_external_zipmods")
+        reporter = bridge.build_reporter(task)
+        for index in range(bridge.MAX_TASK_MESSAGES + 25):
+            reporter.message(f"message-{index}")
+
+        payload = task.to_dict()
+        self.assertEqual(len(payload["messages"]), bridge.MAX_TASK_MESSAGES)
+        self.assertEqual(payload["messages_truncated"], 25)
+        self.assertEqual(payload["messages"][0], "message-25")
+
     def test_version_sort_treats_v_prefix_as_equivalent(self):
         self.assertEqual(_version_sort_key("v1.0"), _version_sort_key("1.0"))
         self.assertEqual(_version_sort_key("V 1.0"), _version_sort_key("1.0"))
@@ -328,9 +339,16 @@ class DuplicateCleanupPolicyTests(unittest.TestCase):
             def fake_build_database(game, db, thumbs, progress_callback=None, mode="incremental"):
                 target = game / "mods" / "Imported" / "sample.zipmod"
                 self.assertTrue(target.is_file())
+                if progress_callback is not None:
+                    for index in range(250):
+                        progress_callback(index / 2, f"progress-{index}")
                 return {"primary_zipmods": 1, "mod_items": 0}
 
-            with patch.object(bridge, "build_database", side_effect=fake_build_database), patch.object(
+            with patch.object(bridge, "build_database", side_effect=fake_build_database) as build_database_mock, patch.object(
+                bridge,
+                "_external_unity3d_index",
+                wraps=bridge._external_unity3d_index,
+            ) as external_index_mock, patch.object(
                 bridge,
                 "extract_png_extra_data",
                 side_effect=lambda value: Path(value).name.encode("utf-8"),
@@ -354,6 +372,9 @@ class DuplicateCleanupPolicyTests(unittest.TestCase):
                 )
 
             self.assertTrue(result["ok"], result)
+            self.assertEqual(build_database_mock.call_count, 1)
+            self.assertEqual(external_index_mock.call_count, 1)
+            self.assertLess(len(task.messages), 30)
             self.assertEqual(result["scanned_count"], 1)
             self.assertEqual(result["png_scanned_count"], 3)
             self.assertEqual(result["copied_count"], 1)

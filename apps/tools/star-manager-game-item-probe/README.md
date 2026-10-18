@@ -4,7 +4,7 @@
 
 本插件源于对 GameBridge 物品映射方式的调查：zipmod 的 GUID、CSV `slot`、`kind` 和名称与游戏运行时使用的 `localSlot` 并不等价。插件通过读取 `ChaListControl` 和 UniversalAutoResolver 输出精确映射，并提供主线程换装接口。
 
-当前版本为 `0.9.5`。完整目录约包含 33000 个游戏物品和 83000 条 UAR 记录，因此目录只在首次初始化成功或手动刷新时扫描；角色状态独立轻量更新，避免周期性卡顿。角色编辑器和 H 场景角色都使用相同的状态读取模型。角色编辑器人物卡读取使用选择性 `LoadFileLimited`；H 场景人物卡读取使用完整 `LoadCharaFile`，随后复用原生 `ChangeNowCoordinate`/`Reload` 流程，不执行额外的 H 场景控制器重绑定。探针不会把状态区块带入 H 场景，也不会在 HTTP 工作线程调用 Unity API。
+当前版本为 `0.9.6`。完整目录约包含 33000 个游戏物品和 83000 条 UAR 记录，因此目录只在首次初始化成功或手动刷新时扫描；角色状态独立轻量更新，避免周期性卡顿。角色编辑器和 H 场景角色都使用相同的状态读取模型。角色编辑器人物卡读取使用选择性 `LoadFileLimited`；H 场景人物卡读取使用完整 `LoadCharaFile`，随后复用原生 `ChangeNowCoordinate`/`Reload` 流程，不执行额外的 H 场景控制器重绑定。单件服饰或配饰换装会把目标字段同步到 `chaFile.coordinate`，并保留 `nowCoordinate` 给原生协程更新，使随后保存人物卡时保留探针刚穿上的物品。探针不会把状态区块带入 H 场景，也不会在 HTTP 工作线程调用 Unity API。
 
 这是一个 HS2 BepInEx 探针插件，用于回答“游戏原生物品界面当前这一项究竟对应什么”，并提供受控的主线程换装命令接口。它不依赖物品名称作为主键。
 
@@ -301,6 +301,7 @@ GameBridge 当前使用的 `zipInfo` 适合查询某个已知 resolved ID，但�
 - 头发的 `hairSlotNo` 是 `ChaFileHair.parts` 的目标索引，不是物品的 `localSlot`；接口限制为 `0..3`，并且必须与 `categoryNo 300..303` 的固定映射一致。
 - 身体的 `bodyPartNo` 只用于 `8`/`313` 身体彩绘，接口限制为 `0..1`；男性 `8` 使用布局 ID，女性 `313` 使用纹理 ID，身体类别仍必须与当前角色性别匹配。
 - 当前调用的是游戏原生 `ChaControl.ChangeClothes(..., false)` / `ChangeAccessory(..., false)` / `ChangeHair(..., false)` 以及面部的 `ChangeHead`、面部类别刷新和 `CreateFaceTexture`。换装后资源加载仍受游戏和模组异步加载状态影响，调用方应轮询命令状态和 `/api/current`。
+- `0.9.6` 修复人物卡保存缺少单件换装结果的问题：HS2 的 `ChangeClothes`/`ChangeAccessory` 协程只更新 `ChaControl.nowCoordinate`，而 `ChaFileControl.SaveCharaFile` 直接序列化 `chaFile.coordinate`。探针在启动原生换装协程前，把目标服装或配饰字段写入 `chaFile.coordinate`，并保持 `nowCoordinate` 不变到原生协程执行，避免 `forceChange=false` 的“已装备”判断跳过资源加载；服装按 `kind` 写入 ID，配饰同时写入 `slotNo`、类别、ID 和 `parentKey`。这只同步卡片数据，不改变原生资源加载入口；如果模组资源稍后失败，卡片仍会记录用户已提交的物品，保存前应以画面和 `/api/current` 确认最终状态。
 - 角色编辑器的 `type: "card"` 使用 `ChaFileControl.LoadFileLimited`、`ChangeNowCoordinate` 和 `ChaControl.Reload`（内部启动原生 `ReloadAsync`）；H 场景的 `type: "card"` 使用完整 `LoadCharaFile(..., false, true)` 和同一套原生 `ChangeNowCoordinate`/`Reload` 换人路径，不依赖 `GameBridge.dll`。两种读取接口都只接受位于游戏 `UserData/chara/female` 或 `male` 分支中的 PNG。
 - 人物卡读取的 `face`、`body`、`hair`、`parameter`、`clothes`、`accessory` 是独立选择项；插件不复制 `status`、游戏进度或未知插件扩展数据。
 - 这些选择项不是“身体骨骼”“面部骨骼”“身体纹理覆盖贴图”或“衣服覆盖贴图”的独立开关。身体/面部分别通过原生 `custom.body` / `custom.face` 及重载参数处理；ABMX 依据 `KKABMPlugin.ABMData` 中的骨骼名称和 `BoneLocation` 应用骨骼修改；KSOX 依据 `TexType` 应用身体/面部覆盖贴图；KCOX 依据服装 ID 和 Renderer 应用衣服覆盖贴图。详细边界见 `apps/docs/game-card-loading.md`。

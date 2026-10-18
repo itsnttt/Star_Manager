@@ -5,6 +5,8 @@ from typing import Any
 
 from star_manager.core.card_parser import (
     UNIVERSAL_AUTO_RESOLVER_ID,
+    extract_auto_resolver_records_from_card_data,
+    extract_character_profile_from_card_data,
     json_safe_msgpack,
     try_unpack_msgpack,
 )
@@ -16,6 +18,7 @@ KKEX_MARKER = b"KKEx"
 SCENE_MAP_GUID_FIELD = "mapInfoGUID"
 SCENE_ITEM_INFO_FIELD = "itemInfo"
 SCENE_PATTERN_INFO_FIELD = "patternInfo"
+AIS_CHARACTER_MARKER = "【AIS_Chara】"
 
 
 def find_png_end(data: bytes) -> int:
@@ -42,6 +45,137 @@ def extract_scene_data(file_bytes: bytes) -> bytes:
     if png_end + 1 >= len(file_bytes):
         return b""
     return file_bytes[png_end - 4 :]
+
+
+def _read_dotnet_string(data: bytes, offset: int) -> tuple[str, int] | None:
+    """Read BinaryWriter.Write(string) data without decoding the whole scene."""
+    value = 0
+    shift = 0
+    cursor = offset
+    while cursor < len(data) and shift <= 35:
+        byte = data[cursor]
+        cursor += 1
+        value |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            end = cursor + value
+            if value <= 0 or end > len(data):
+                return None
+            try:
+                return data[cursor:end].decode("utf-8"), end
+            except UnicodeDecodeError:
+                return None
+        shift += 7
+    return None
+
+
+def _embedded_card_start(data: bytes, marker_offset: int) -> int | None:
+    """Find the product number immediately preceding an embedded AIS marker."""
+    marker = AIS_CHARACTER_MARKER
+    for prefix_offset in range(max(0, marker_offset - 5), marker_offset):
+        decoded = _read_dotnet_string(data, prefix_offset)
+        if not decoded or decoded[0] != marker or decoded[1] != marker_offset + len(marker.encode("utf-8")):
+            continue
+        product_offset = prefix_offset - 4
+        if product_offset < 0:
+            continue
+        product_no = int.from_bytes(data[product_offset:prefix_offset], "little", signed=True)
+        if 0 <= product_no <= 1000:
+            return product_offset
+    return None
+
+
+def _read_embedded_character_card(data: bytes, marker_offset: int) -> tuple[int, int] | None:
+    """Return ``(card_start, card_end)`` for one embedded AIS character."""
+    card_start = _embedded_card_start(data, marker_offset)
+    if card_start is None:
+        return None
+    marker_read = None
+    for prefix_offset in range(max(0, marker_offset - 5), marker_offset):
+        candidate = _read_dotnet_string(data, prefix_offset)
+        if candidate and candidate[0] == AIS_CHARACTER_MARKER and candidate[1] == marker_offset + len(AIS_CHARACTER_MARKER.encode("utf-8")):
+            marker_read = candidate
+            break
+    if not marker_read:
+        return None
+    _, cursor = marker_read
+    try:
+        version = _read_dotnet_string(data, cursor)
+        if not version:
+            return None
+        _, cursor = version
+        if cursor + 4 > len(data):
+            return None
+        cursor += 4  # language
+        user_id = _read_dotnet_string(data, cursor)
+        if not user_id:
+            return None
+        _, cursor = user_id
+        data_id = _read_dotnet_string(data, cursor)
+        if not data_id:
+            return None
+        _, cursor = data_id
+        if cursor + 4 > len(data):
+            return None
+        header_size = int.from_bytes(data[cursor : cursor + 4], "little", signed=True)
+        cursor += 4
+        if header_size <= 0 or header_size > 16 * 1024 * 1024 or cursor + header_size + 8 > len(data):
+            return None
+        cursor += header_size
+        block_size = int.from_bytes(data[cursor : cursor + 8], "little", signed=True)
+        cursor += 8
+        if block_size <= 0 or block_size > len(data) - cursor:
+            return None
+        return card_start, cursor + block_size
+    except (OverflowError, ValueError):
+        return None
+
+
+def extract_scene_character_cards(file_bytes: bytes) -> list[dict[str, Any]]:
+    """Extract embedded AIS character-card payloads from a StudioNEOV2 PNG.
+
+    Studio stores an AIS card after each ``OCIChar`` object. The card begins
+    with a little-endian product number and a .NET string marker, then uses the
+    same version/id/block layout as a regular character-card PNG. The visible
+    scene PNG is reused as the cover when the extracted payload is exported.
+    """
+    try:
+        png_end = find_png_end(file_bytes)
+    except (TypeError, ValueError):
+        return []
+
+    marker_bytes = AIS_CHARACTER_MARKER.encode("utf-8")
+    cards: list[dict[str, Any]] = []
+    cursor = png_end
+    seen_ranges: set[tuple[int, int]] = set()
+    while cursor < len(file_bytes):
+        marker_offset = file_bytes.find(marker_bytes, cursor)
+        if marker_offset < 0:
+            break
+        parsed = _read_embedded_character_card(file_bytes, marker_offset)
+        if parsed:
+            card_start, card_end = parsed
+            key = (card_start, card_end)
+            if key not in seen_ranges:
+                seen_ranges.add(key)
+                payload = file_bytes[card_start:card_end]
+                card_data = b"\x00\x00\x00\x00" + payload
+                try:
+                    profile = extract_character_profile_from_card_data(card_data)
+                except (TypeError, ValueError, IndexError, OverflowError):
+                    profile = {}
+                cards.append(
+                    {
+                        "index": len(cards),
+                        "payload": payload,
+                        "name": str(profile.get("fullname") or "").strip(),
+                        "sex": profile.get("sex"),
+                        "profile": profile,
+                    }
+                )
+            cursor = card_end
+        else:
+            cursor = marker_offset + len(marker_bytes)
+    return cards
 
 
 def _iter_kkex_payloads(scene_data: bytes) -> list[dict[str, Any]]:
@@ -192,13 +326,19 @@ def _scene_uar_dependencies(metadata: dict[str, Any], start_index: int) -> list[
     return dependencies
 
 
-def inspect_scene_card_bytes(file_bytes: bytes) -> dict[str, Any] | None:
+def inspect_scene_card_bytes(
+    file_bytes: bytes,
+    *,
+    include_character_dependencies: bool = True,
+) -> dict[str, Any] | None:
     """Inspect a Studio scene PNG without modifying it.
 
     Scene map dependencies are stored in the scene-level UAR plugin payload as
     ``mapInfoGUID``. Newer scene cards additionally store object dependencies
     in ``itemInfo`` and ``patternInfo`` rather than the item-oriented ``info``
-    records used by character and clothes cards.
+    records used by character and clothes cards. Embedded ``AIS_Chara``
+    objects contribute their own UAR records to the returned dependencies and
+    are also summarized separately for the scene-card export action.
     """
     try:
         scene_data = extract_scene_data(file_bytes)
@@ -231,8 +371,28 @@ def inspect_scene_card_bytes(file_bytes: bytes) -> dict[str, Any] | None:
                 dependencies.append(dependency)
             dependencies.extend(_scene_uar_dependencies(metadata, len(dependencies)))
 
-    unique_dependencies: list[dict[str, Any]] = []
-    seen_dependencies: set[tuple[str, str, str, str]] = set()
+    embedded_characters = (
+        extract_scene_character_cards(file_bytes)
+        if include_character_dependencies
+        else []
+    )
+    # OCIChar objects carry embedded AIS character cards. Their clothing,
+    # hair, face and body dependencies live in each character card's UAR
+    # payload, not in the scene-level UAR payload parsed above.
+    for character in embedded_characters:
+        payload = character.get("payload")
+        if not isinstance(payload, (bytes, bytearray)):
+            continue
+        try:
+            character_dependencies = extract_auto_resolver_records_from_card_data(
+                b"\x00\x00\x00\x00" + bytes(payload)
+            )
+        except (TypeError, ValueError, IndexError, OverflowError):
+            character_dependencies = []
+        dependencies.extend(character_dependencies)
+
+    unique_dependencies = []
+    seen_dependencies = set()
     for dependency in dependencies:
         dependency_type = str(dependency.get("DependencyType") or "scene")
         mod_id = str(dependency.get("ModID") or "")
@@ -252,11 +412,27 @@ def inspect_scene_card_bytes(file_bytes: bytes) -> dict[str, Any] | None:
         "plugin_ids": sorted(plugin_ids),
         "dependencies": [json_safe_msgpack(item) for item in unique_dependencies],
         "dependency_count": len(unique_dependencies),
+        "embedded_character_count": len(embedded_characters),
+        "embedded_characters": [
+            {
+                "index": item["index"],
+                "name": item.get("name") or "",
+                "sex": item.get("sex"),
+            }
+            for item in embedded_characters
+        ],
     }
 
 
-def inspect_scene_card_file(card_path: Path) -> dict[str, Any] | None:
+def inspect_scene_card_file(
+    card_path: Path,
+    *,
+    include_character_dependencies: bool = True,
+) -> dict[str, Any] | None:
     try:
-        return inspect_scene_card_bytes(card_path.read_bytes())
+        return inspect_scene_card_bytes(
+            card_path.read_bytes(),
+            include_character_dependencies=include_character_dependencies,
+        )
     except OSError:
         return None

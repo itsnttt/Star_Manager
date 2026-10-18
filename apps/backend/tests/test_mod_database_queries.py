@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from star_manager.services.mod_database_core import init_db  # noqa: E402
 from star_manager.services.mod_database_queries import (  # noqa: E402
     BUILTIN_SOURCE_LABEL,
+    database_status,
     export_zipmods,
     hydrate_current_game_state_thumbnails,
     list_mod_item_filters,
@@ -448,6 +449,62 @@ class ItemPaginationTests(unittest.TestCase):
         self.assertTrue(result["has_more"])
         self.assertEqual([row["name"] for row in result["rows"]], ["Charlie"])
 
+    def test_exact_locate_returns_only_the_target_page_without_changing_filters(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "mod_database.sqlite"
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                init_db(conn)
+                now = "2026-01-01T00:00:00+00:00"
+                with conn:
+                    zipmod_id = conn.execute(
+                        """
+                        INSERT INTO zipmods (
+                            guid, name, file_path, relative_path, file_name,
+                            scan_status, last_scanned_at, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, 'ok', ?, ?, ?)
+                        """,
+                        (
+                            "locate.sample",
+                            "Locate sample",
+                            str(root / "sample.zipmod"),
+                            "sample.zipmod",
+                            "sample.zipmod",
+                            now,
+                            now,
+                            now,
+                        ),
+                    ).lastrowid
+                    for index, name in enumerate(("Alpha", "Bravo", "Charlie", "Delta"), start=1):
+                        conn.execute(
+                            """
+                            INSERT INTO mod_items (
+                                zipmod_id, zipmod_guid, item_id, kind, name,
+                                parse_status, created_at, updated_at
+                            ) VALUES (?, ?, ?, '240', ?, 'ok', ?, ?)
+                            """,
+                            (zipmod_id, "locate.sample", str(index), name, now, now),
+                        )
+            finally:
+                conn.close()
+
+            result = list_mod_items(
+                db_path=db_path,
+                source="mod",
+                kind="240",
+                locate_source="mod",
+                locate_guid="LOCATE.SAMPLE",
+                locate_slot="3",
+                limit=2,
+            )
+
+        self.assertEqual(result["locate"]["found"], True)
+        self.assertEqual(result["locate"]["index"], 2)
+        self.assertEqual(result["offset"], 2)
+        self.assertEqual([row["name"] for row in result["rows"]], ["Charlie", "Delta"])
+
 
 class ZipmodExportTests(unittest.TestCase):
     def test_map_filters_separate_game_and_studio_and_include_dual_maps(self):
@@ -879,6 +936,87 @@ class StudioItemQueryTests(unittest.TestCase):
         self.assertEqual(thumbnail_zipmods["total"], 0)
         self.assertEqual(warning_zipmods["total"], 0)
         self.assertEqual(normal_zipmods["total"], 1)
+
+
+class Unity3dCompressionWarningQueryTests(unittest.TestCase):
+    def test_uncompressed_dependencies_are_warning_status(self):
+        root = Path(__file__).resolve().parents[1]
+        db_path = root / "_test_uncompressed_warning.sqlite"
+        db_path.unlink(missing_ok=True)
+        try:
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                init_db(conn)
+                now = "2026-10-17T00:00:00+00:00"
+                with conn:
+                    conn.execute(
+                        """
+                        INSERT INTO zipmods (
+                            guid, name, author, file_path, relative_path, file_name,
+                            file_size, item_count, unity3d_uncompressed_count,
+                            scan_status, last_scanned_at, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ok', ?, ?, ?)
+                        """,
+                        (
+                            "uncompressed.guid", "Uncompressed", "Author",
+                            str(root / "uncompressed.zipmod"), "uncompressed.zipmod",
+                            "uncompressed.zipmod", 22 * 1024 * 1024, 2, 2, now, now, now,
+                        ),
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO zipmods (
+                            guid, name, author, file_path, relative_path, file_name,
+                            file_size, item_count,
+                            scan_status, last_scanned_at, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ok', ?, ?, ?)
+                        """,
+                        (
+                            "compressed.guid", "Compressed", "Author",
+                            str(root / "compressed.zipmod"), "compressed.zipmod",
+                            "compressed.zipmod", 50 * 1024 * 1024, 1, now, now, now,
+                        ),
+                    )
+                    for guid, name, file_name, file_size, item_count in (
+                        ("zero-items.guid", "Zero items", "zero-items.zipmod", 100 * 1024 * 1024, 0),
+                        ("threshold.guid", "At threshold", "threshold.zipmod", 10 * 1024 * 1024, 1),
+                    ):
+                        conn.execute(
+                            """
+                            INSERT INTO zipmods (
+                                guid, name, author, file_path, relative_path, file_name,
+                                file_size, item_count, unity3d_uncompressed_count,
+                                scan_status, last_scanned_at, created_at, updated_at
+                            ) VALUES (?, ?, 'Author', ?, ?, ?, ?, ?, 1, 'ok', ?, ?, ?)
+                            """,
+                            (
+                                guid, name, str(root / file_name), file_name, file_name,
+                                file_size, item_count, now, now, now,
+                            ),
+                        )
+            finally:
+                conn.close()
+
+            warning = list_zipmods(db_path=db_path, status="warning")
+            specific = list_zipmods(db_path=db_path, status="unity3d_uncompressed")
+            normal = list_zipmods(db_path=db_path, status="normal")
+            abnormal = list_zipmods(db_path=db_path, status="abnormal")
+            summary = database_status(db_path=db_path)
+        finally:
+            db_path.unlink(missing_ok=True)
+
+        self.assertEqual(warning["total"], 1)
+        self.assertEqual(warning["rows"][0]["guid"], "uncompressed.guid")
+        self.assertEqual(specific["total"], 1)
+        self.assertEqual(specific["rows"][0]["unity3d_uncompressed_count"], 2)
+        self.assertEqual(normal["total"], 3)
+        self.assertEqual(
+            {row["guid"] for row in normal["rows"]},
+            {"compressed.guid", "zero-items.guid", "threshold.guid"},
+        )
+        self.assertEqual(abnormal["total"], 1)
+        self.assertEqual(summary["zipmod_warning_count"], 1)
 
 
 if __name__ == "__main__":

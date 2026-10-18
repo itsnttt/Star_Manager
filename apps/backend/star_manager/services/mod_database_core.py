@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -147,8 +147,15 @@ class PreparedZipmodItems:
     unity3d_in_game_count: int
     unity3d_missing_count: int
     unity3d_error: str
+    unity3d_compression: str = ""
+    unity3d_uncompressed_count: int = 0
+    unity3d_lzma_count: int = 0
+    unity3d_lz4_count: int = 0
+    unity3d_other_count: int = 0
+    unity3d_unknown_count: int = 0
     unity3d_not_in_mod_count: int = 0
     unity3d_other_mod_count: int = 0
+    unity3d_dependencies: list[dict[str, str]] = field(default_factory=list)
     scan_status: str = ""
     scan_error: str = ""
 
@@ -255,6 +262,12 @@ def init_db(conn: sqlite3.Connection) -> None:
             unity3d_other_mod_count INTEGER NOT NULL DEFAULT 0,
             unity3d_missing_count INTEGER NOT NULL DEFAULT 0,
             unity3d_error TEXT NOT NULL DEFAULT '',
+            unity3d_compression TEXT NOT NULL DEFAULT '',
+            unity3d_uncompressed_count INTEGER NOT NULL DEFAULT 0,
+            unity3d_lzma_count INTEGER NOT NULL DEFAULT 0,
+            unity3d_lz4_count INTEGER NOT NULL DEFAULT 0,
+            unity3d_other_count INTEGER NOT NULL DEFAULT 0,
+            unity3d_unknown_count INTEGER NOT NULL DEFAULT 0,
             scan_status TEXT NOT NULL,
             scan_error TEXT NOT NULL DEFAULT '',
             last_scanned_at TEXT NOT NULL,
@@ -410,10 +423,26 @@ def init_db(conn: sqlite3.Connection) -> None:
             UNIQUE(zipmod_path, resource_key)
         );
 
+        CREATE TABLE IF NOT EXISTS zipmod_unity3d_dependencies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            zipmod_id INTEGER NOT NULL REFERENCES zipmods(id) ON DELETE CASCADE,
+            zipmod_guid TEXT NOT NULL DEFAULT '',
+            resource_path TEXT NOT NULL,
+            member_path TEXT NOT NULL DEFAULT '',
+            source_kind TEXT NOT NULL DEFAULT '',
+            compression TEXT NOT NULL DEFAULT 'unknown',
+            read_status TEXT NOT NULL DEFAULT 'missing',
+            read_error TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL,
+            UNIQUE(zipmod_id, resource_path)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_unity3d_providers_resource_key
             ON unity3d_providers(resource_key);
         CREATE INDEX IF NOT EXISTS idx_unity3d_providers_zipmod_path
             ON unity3d_providers(zipmod_path);
+        CREATE INDEX IF NOT EXISTS idx_zipmod_unity3d_dependencies_zipmod_id
+            ON zipmod_unity3d_dependencies(zipmod_id);
 
         CREATE TABLE IF NOT EXISTS bepinex_plugin_cache (
             game_dir TEXT PRIMARY KEY,
@@ -433,6 +462,12 @@ def init_db(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "zipmods", "unity3d_other_mod_count", "INTEGER NOT NULL DEFAULT 0")
     ensure_column(conn, "zipmods", "unity3d_missing_count", "INTEGER NOT NULL DEFAULT 0")
     ensure_column(conn, "zipmods", "unity3d_error", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "zipmods", "unity3d_compression", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "zipmods", "unity3d_uncompressed_count", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "zipmods", "unity3d_lzma_count", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "zipmods", "unity3d_lz4_count", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "zipmods", "unity3d_other_count", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "zipmods", "unity3d_unknown_count", "INTEGER NOT NULL DEFAULT 0")
     ensure_column(conn, "mod_items", "thumbnail_cache_path", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "mod_items", "thumbnail_status", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "mod_items", "thumbnail_error", "TEXT NOT NULL DEFAULT ''")

@@ -5,6 +5,7 @@ import copy
 import hashlib
 import io
 import json
+import lzma
 import re
 import shutil
 import sqlite3
@@ -70,6 +71,7 @@ ZIPMOD_MEMBER_READ_ERRORS = ZIPMOD_READ_ERRORS + (KeyError, NotImplementedError)
 ZIPMOD_THUMBNAIL_TASK_ERRORS = ZIPMOD_MEMBER_READ_ERRORS + (ValueError,)
 
 THUMBNAIL_PROFILE_LOG_PATH = runtime_root() / "thumbnail_profile.log"
+THUMBNAIL_PROFILE_DETAILED_PATH = runtime_root() / "thumbnail_profile.jsonl"
 _THUMBNAIL_PROFILE_LOCK = threading.Lock()
 _THUMBNAIL_PROFILE_CURRENT_PATH = THUMBNAIL_PROFILE_LOG_PATH
 _THUMBNAIL_PROFILE_RUN_ID = ""
@@ -88,6 +90,18 @@ STUDIO_CATEGORY_FILE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+UNCOMPRESSED_UNITY3D_AVERAGE_SIZE_BYTES = 10 * 1024 * 1024
+
+# Unity AssetBundle block compression values are stored in the low six bits
+# of the UnityFS/UnityWeb archive flags.  Keep the persisted values stable so
+# callers can distinguish a truly uncompressed bundle, LZMA, and LZ4 from
+# formats that need a closer look.
+UNITY3D_COMPRESSION_NONE = "none"
+UNITY3D_COMPRESSION_LZMA = "lzma"
+UNITY3D_COMPRESSION_LZ4 = "lz4"
+UNITY3D_COMPRESSION_OTHER = "other"
+UNITY3D_COMPRESSION_UNKNOWN = "unknown"
+
 # Studio CSVs written by the game's native Japanese tooling use Japanese
 # column names.  Keep these aliases local to the Studio adapter so ordinary
 # character/custom CSV parsing retains its existing header contract.
@@ -102,20 +116,13 @@ STUDIO_HEADER_ALIASES = {
 }
 
 
-def thumbnail_profile_path_for_run(started_at: str, run_id: str) -> Path:
-    safe_started_at = re.sub(r"[^0-9A-Za-z]+", "", started_at)[:15] or "run"
-    safe_run_id = re.sub(r"[^0-9A-Za-z]+", "", run_id)[:12] or uuid.uuid4().hex[:12]
-    return runtime_root() / f"thumbnail_profile_{safe_started_at}_{safe_run_id}.jsonl"
-
-
 def begin_thumbnail_profile(record: dict) -> Path:
     global _THUMBNAIL_PROFILE_CURRENT_PATH
     global _THUMBNAIL_PROFILE_RUN_ID
     global _THUMBNAIL_PROFILE_SEQUENCE
 
     run_id = str(record.get("run_id") or uuid.uuid4().hex)
-    started_at = str(record.get("started_at") or utc_now())
-    log_path = thumbnail_profile_path_for_run(started_at, run_id)
+    log_path = THUMBNAIL_PROFILE_DETAILED_PATH
     record = dict(record)
     record["run_id"] = run_id
 
@@ -284,7 +291,9 @@ def _zipmod_row_payload(conn: sqlite3.Connection, zipmod_id: int) -> dict:
         SELECT id, scan_status, name, author, version, item_count,
                unity3d_status, unity3d_not_in_mod_count, unity3d_in_mod_count,
                unity3d_in_game_count, unity3d_other_mod_count,
-               unity3d_missing_count, unity3d_error, guid,
+               unity3d_missing_count, unity3d_error, unity3d_compression,
+               unity3d_uncompressed_count, unity3d_lz4_count,
+               unity3d_lzma_count, unity3d_other_count, unity3d_unknown_count, guid,
                file_name, relative_path, file_path, last_scanned_at, scan_error,
                (
                    SELECT COUNT(*)
@@ -313,6 +322,12 @@ def _zipmod_row_payload(conn: sqlite3.Connection, zipmod_id: int) -> dict:
         "unity3d_other_mod_count": row["unity3d_other_mod_count"],
         "unity3d_missing_count": row["unity3d_missing_count"],
         "unity3d_error": row["unity3d_error"],
+        "unity3d_compression": row["unity3d_compression"],
+        "unity3d_uncompressed_count": row["unity3d_uncompressed_count"],
+        "unity3d_lzma_count": row["unity3d_lzma_count"],
+        "unity3d_lz4_count": row["unity3d_lz4_count"],
+        "unity3d_other_count": row["unity3d_other_count"],
+        "unity3d_unknown_count": row["unity3d_unknown_count"],
         "guid": row["guid"],
         "file_name": row["file_name"],
         "relative_path": row["relative_path"],
@@ -480,10 +495,12 @@ def upsert_invalid_zipmod(conn: sqlite3.Connection, invalid: ZipmodCandidate, no
             guid, name, version, author, file_path, relative_path, file_name,
             file_size, modified_at, item_count, unity3d_status, unity3d_not_in_mod_count,
             unity3d_in_mod_count, unity3d_in_game_count, unity3d_other_mod_count,
-            unity3d_missing_count, unity3d_error, scan_status, scan_error,
+            unity3d_missing_count, unity3d_error, unity3d_compression,
+            unity3d_uncompressed_count, unity3d_lzma_count, unity3d_lz4_count, unity3d_other_count,
+            unity3d_unknown_count, scan_status, scan_error,
             last_scanned_at, created_at, updated_at
         )
-        VALUES (?, '', '', '', ?, ?, ?, ?, ?, 0, '', 0, 0, 0, 0, 0, '', ?, ?, ?, ?, ?)
+        VALUES (?, '', '', '', ?, ?, ?, ?, ?, 0, '', 0, 0, 0, 0, 0, '', '', 0, 0, 0, 0, 0, ?, ?, ?, ?, ?)
         ON CONFLICT(guid) DO UPDATE SET
             file_path = excluded.file_path,
             relative_path = excluded.relative_path,
@@ -498,6 +515,12 @@ def upsert_invalid_zipmod(conn: sqlite3.Connection, invalid: ZipmodCandidate, no
             unity3d_other_mod_count = excluded.unity3d_other_mod_count,
             unity3d_missing_count = excluded.unity3d_missing_count,
             unity3d_error = excluded.unity3d_error,
+            unity3d_compression = excluded.unity3d_compression,
+            unity3d_uncompressed_count = excluded.unity3d_uncompressed_count,
+            unity3d_lzma_count = excluded.unity3d_lzma_count,
+            unity3d_lz4_count = excluded.unity3d_lz4_count,
+            unity3d_other_count = excluded.unity3d_other_count,
+            unity3d_unknown_count = excluded.unity3d_unknown_count,
             scan_status = excluded.scan_status,
             scan_error = excluded.scan_error,
             last_scanned_at = excluded.last_scanned_at,
@@ -1141,6 +1164,390 @@ def unity3d_member_signatures(
     except ZIPMOD_MEMBER_READ_ERRORS as exc:
         return {}, str(exc)
     return signatures, ""
+
+
+def detect_unity3d_compression(bundle_prefix: bytes) -> str:
+    """Classify a Unity bundle's archive-header compression flag.
+
+    UnityFS stores the block compression kind in the low six bits of the
+    archive flags. The actual payload classification is performed by
+    ``inspect_unity3d_stream_compression`` after reading block-info flags.
+    This header-only helper remains useful for truncated diagnostics and
+    compatibility fixtures.
+    """
+
+    data = bytes(bundle_prefix or b"")
+    cursor = 0
+
+    def read_cstring() -> bytes | None:
+        nonlocal cursor
+        end = data.find(b"\x00", cursor)
+        if end < 0:
+            return None
+        value = data[cursor:end]
+        cursor = end + 1
+        return value
+
+    signature = read_cstring()
+    if signature is None:
+        return UNITY3D_COMPRESSION_UNKNOWN
+    if signature not in {b"UnityFS", b"UnityRaw", b"UnityWeb"}:
+        return UNITY3D_COMPRESSION_UNKNOWN
+    if cursor + 4 > len(data):
+        return UNITY3D_COMPRESSION_UNKNOWN
+    version = struct.unpack_from(">I", data, cursor)[0]
+    cursor += 4
+    if read_cstring() is None or read_cstring() is None:
+        return UNITY3D_COMPRESSION_UNKNOWN
+
+    # UnityPy uses the UnityFS filesystem header for UnityRaw/UnityWeb only
+    # at version 6.  Older web/raw bundles have a different header and are
+    # deliberately grouped as another compression format here.
+    if signature != b"UnityFS" and version != 6:
+        return UNITY3D_COMPRESSION_OTHER
+
+    # UnityFS and the newer UnityRaw/UnityWeb format have:
+    #   fileSize (int64), compressedBlocksInfoSize (uint32),
+    #   uncompressedBlocksInfoSize (uint32), flags (uint32)
+    if cursor + 20 > len(data):
+        return UNITY3D_COMPRESSION_UNKNOWN
+    cursor += 8 + 4 + 4
+    flags = struct.unpack_from(">I", data, cursor)[0]
+    compression = flags & 0x3F
+    if compression == 0:
+        return UNITY3D_COMPRESSION_NONE
+    if compression == 1:  # LZMA
+        return UNITY3D_COMPRESSION_LZMA
+    if compression in {2, 3}:  # LZ4 / LZ4HC
+        return UNITY3D_COMPRESSION_LZ4
+    # Unity's flag value 4 is LZHAM; UnityPy keeps it as an unimplemented
+    # compression mode. Values 5-63 are reserved or custom modes. They are
+    # intentionally grouped as "other" until a concrete codec is identified.
+    return UNITY3D_COMPRESSION_OTHER
+
+
+def inspect_unity3d_member_compression(
+    zf: zipfile.ZipFile,
+    member_name: str,
+    prefix_size: int = 64 * 1024,
+) -> str:
+    """Read UnityFS block metadata and classify the actual data blocks.
+
+    The archive header's low six bits describe the compression of the block
+    metadata.  The payload blocks have their own flags in that metadata, so
+    using only the archive header can report ``LZ4`` for a bundle whose asset
+    data is actually stored uncompressed.
+    """
+
+    with zf.open(member_name, "r") as member:
+        info = zf.getinfo(member_name)
+        prefix = member.read(max(256, int(prefix_size)))
+        member.seek(0)
+        result = inspect_unity3d_stream_compression(member, int(info.file_size), prefix_size)
+        # Keep short header-only fixtures and truncated files classifiable by
+        # their archive header while real UnityFS bundles use payload flags.
+        return result if result != UNITY3D_COMPRESSION_UNKNOWN else detect_unity3d_compression(prefix)
+
+
+def _decompress_lz4_block(data: bytes, expected_size: int) -> bytes:
+    """Decode a raw LZ4 block without requiring an optional native package."""
+
+    source = bytes(data or b"")
+    output = bytearray()
+    cursor = 0
+    while cursor < len(source):
+        token = source[cursor]
+        cursor += 1
+        literal_length = token >> 4
+        if literal_length == 15:
+            while cursor < len(source):
+                length = source[cursor]
+                cursor += 1
+                literal_length += length
+                if length != 255:
+                    break
+        literal_end = cursor + literal_length
+        if literal_end > len(source):
+            raise ValueError("truncated LZ4 literal block")
+        output.extend(source[cursor:literal_end])
+        cursor = literal_end
+        if cursor >= len(source):
+            break
+        if cursor + 2 > len(source):
+            raise ValueError("truncated LZ4 match offset")
+        offset = source[cursor] | (source[cursor + 1] << 8)
+        cursor += 2
+        if offset <= 0 or offset > len(output):
+            raise ValueError("invalid LZ4 match offset")
+        match_length = (token & 0x0F) + 4
+        if (token & 0x0F) == 15:
+            while cursor < len(source):
+                length = source[cursor]
+                cursor += 1
+                match_length += length
+                if length != 255:
+                    break
+        for _ in range(match_length):
+            output.append(output[-offset])
+    if expected_size and len(output) != int(expected_size):
+        raise ValueError(
+            f"LZ4 block size mismatch: expected {expected_size}, got {len(output)}"
+        )
+    return bytes(output)
+
+
+def _decompress_unity_block_info(data: bytes, compression: int, expected_size: int) -> bytes:
+    mode = int(compression) & 0x3F
+    if mode == 0:
+        result = bytes(data)
+    elif mode == 1:
+        import lzma
+
+        if len(data) < 5:
+            raise ValueError("truncated Unity LZMA header")
+        props, dictionary_size = struct.unpack_from("<BI", data, 0)
+        lc = props % 9
+        remainder = props // 9
+        pb = remainder // 5
+        lp = remainder % 5
+        decoder = lzma.LZMADecompressor(
+            format=lzma.FORMAT_RAW,
+            filters=[
+                {
+                    "id": lzma.FILTER_LZMA1,
+                    "dict_size": dictionary_size,
+                    "lc": lc,
+                    "lp": lp,
+                    "pb": pb,
+                }
+            ],
+        )
+        result = decoder.decompress(data[5:])
+    elif mode in {2, 3}:
+        result = _decompress_lz4_block(data, expected_size)
+    else:
+        raise ValueError(f"unsupported Unity block-info compression flag: {mode}")
+    if expected_size and len(result) != int(expected_size):
+        raise ValueError(
+            f"Unity block-info size mismatch: expected {expected_size}, got {len(result)}"
+        )
+    return result
+
+
+def inspect_unity3d_stream_compression(
+    stream,
+    stream_size: int,
+    prefix_size: int = 64 * 1024,
+) -> str:
+    """Classify the compression used by UnityFS payload blocks."""
+
+    prefix = stream.read(max(256, int(prefix_size)))
+    data = bytes(prefix or b"")
+    cursor = 0
+
+    def read_cstring() -> bytes | None:
+        nonlocal cursor
+        end = data.find(b"\x00", cursor)
+        if end < 0:
+            return None
+        value = data[cursor:end]
+        cursor = end + 1
+        return value
+
+    signature = read_cstring()
+    if signature is None:
+        return UNITY3D_COMPRESSION_UNKNOWN
+    if signature not in {b"UnityFS", b"UnityRaw", b"UnityWeb"}:
+        return UNITY3D_COMPRESSION_UNKNOWN
+    if cursor + 4 > len(data):
+        return UNITY3D_COMPRESSION_UNKNOWN
+    version = struct.unpack_from(">I", data, cursor)[0]
+    cursor += 4
+    if read_cstring() is None or read_cstring() is None:
+        return UNITY3D_COMPRESSION_UNKNOWN
+    if signature != b"UnityFS" and version != 6:
+        return UNITY3D_COMPRESSION_OTHER
+    if cursor + 20 > len(data):
+        return UNITY3D_COMPRESSION_UNKNOWN
+    bundle_size, compressed_info_size, uncompressed_info_size, flags = struct.unpack_from(
+        ">qIII", data, cursor
+    )
+    header_end = cursor + 20
+    if bundle_size > 0:
+        stream_size = min(int(stream_size), int(bundle_size))
+    info_offset = header_end
+    if flags & 0x80:
+        info_offset = stream_size - int(compressed_info_size)
+    elif flags & 0x200:
+        info_offset = (info_offset + 15) & ~15
+    if info_offset < 0 or info_offset + compressed_info_size > stream_size:
+        return UNITY3D_COMPRESSION_UNKNOWN
+    try:
+        stream.seek(info_offset)
+        compressed_info = stream.read(int(compressed_info_size))
+        block_info = _decompress_unity_block_info(
+            compressed_info,
+            flags,
+            int(uncompressed_info_size),
+        )
+        if len(block_info) < 20:
+            return UNITY3D_COMPRESSION_UNKNOWN
+        position = 16
+        block_count = struct.unpack_from(">I", block_info, position)[0]
+        position += 4
+        modes: set[str] = set()
+        for _ in range(block_count):
+            if position + 10 > len(block_info):
+                return UNITY3D_COMPRESSION_UNKNOWN
+            _uncompressed_size, _compressed_size, block_flags = struct.unpack_from(
+                ">IIH", block_info, position
+            )
+            position += 10
+            mode = int(block_flags) & 0x3F
+            modes.add(
+                {
+                    0: UNITY3D_COMPRESSION_NONE,
+                    1: UNITY3D_COMPRESSION_LZMA,
+                    2: UNITY3D_COMPRESSION_LZ4,
+                    3: UNITY3D_COMPRESSION_LZ4,
+                }.get(mode, UNITY3D_COMPRESSION_OTHER)
+            )
+        if len(modes) == 1:
+            return next(iter(modes))
+        return UNITY3D_COMPRESSION_OTHER if modes else UNITY3D_COMPRESSION_UNKNOWN
+    except (OSError, ValueError, IndexError, struct.error, EOFError):
+        return UNITY3D_COMPRESSION_UNKNOWN
+
+
+def summarize_unity3d_compression(counts: dict[str, int]) -> str:
+    """Return a label only when every inspected Unity3D has the same mode.
+
+    Compression is persisted per Unity3D dependency.  When several modes are
+    present there is no meaningful single value, so this returns an empty string.
+    """
+
+    present = {
+        key
+        for key in (
+            UNITY3D_COMPRESSION_NONE,
+            UNITY3D_COMPRESSION_LZMA,
+            UNITY3D_COMPRESSION_LZ4,
+            UNITY3D_COMPRESSION_OTHER,
+            UNITY3D_COMPRESSION_UNKNOWN,
+        )
+        if int(counts.get(key, 0) or 0) > 0
+    }
+    if not present:
+        return ""
+    if len(present) == 1:
+        return next(iter(present))
+    return ""
+
+
+def inspect_zipmod_unity3d_compression(
+    zf: zipfile.ZipFile,
+    referenced_paths: Iterable[str] | None = None,
+) -> tuple[str, dict[str, int]]:
+    """Classify referenced `.unity3d` members in an open zipmod archive."""
+
+    counts = {
+        UNITY3D_COMPRESSION_NONE: 0,
+        UNITY3D_COMPRESSION_LZMA: 0,
+        UNITY3D_COMPRESSION_LZ4: 0,
+        UNITY3D_COMPRESSION_OTHER: 0,
+        UNITY3D_COMPRESSION_UNKNOWN: 0,
+    }
+    wanted = {
+        normalize_zip_path(path).lower()
+        for path in (referenced_paths or [])
+        if normalize_zip_path(str(path or ""))
+    }
+    for info in zf.infolist():
+        normalized = normalize_zip_path(info.filename)
+        if info.is_dir() or not is_unity3d_path(normalized):
+            continue
+        if wanted and normalized.lower() not in wanted:
+            continue
+        try:
+            compression = inspect_unity3d_member_compression(zf, info.filename)
+        except ZIPMOD_MEMBER_READ_ERRORS:
+            compression = UNITY3D_COMPRESSION_UNKNOWN
+        counts[compression] = counts.get(compression, 0) + 1
+    return summarize_unity3d_compression(counts), counts
+
+
+def inspect_unity3d_dependency_records(
+    game_dir: Path,
+    zf: zipfile.ZipFile | None,
+    zip_index: ZipMemberIndex | None,
+    items: Iterable[CsvItem],
+    zip_error: str = "",
+) -> tuple[list[dict[str, str]], dict[str, int]]:
+    """Inspect only Unity3D files referenced by parsed zipmod CSV rows."""
+
+    references: dict[str, str] = {}
+    for item in items:
+        for reference in unity3d_reference_paths(item):
+            normalized = normalize_zip_path(reference)
+            if normalized:
+                references.setdefault(normalized.casefold(), normalized)
+
+    counts = {
+        UNITY3D_COMPRESSION_NONE: 0,
+        UNITY3D_COMPRESSION_LZMA: 0,
+        UNITY3D_COMPRESSION_LZ4: 0,
+        UNITY3D_COMPRESSION_OTHER: 0,
+        UNITY3D_COMPRESSION_UNKNOWN: 0,
+    }
+    records: list[dict[str, str]] = []
+    for reference in sorted(references.values(), key=str.casefold):
+        member_name = find_zip_member(zf, reference, zip_index) if zf is not None else None
+        source_kind = ""
+        actual_name = ""
+        compression = UNITY3D_COMPRESSION_UNKNOWN
+        # Keep an absent dependency distinct from a present but unreadable
+        # bundle. This distinction is shown in the dependency detail panel.
+        read_status = "missing"
+        read_error = zip_error
+        try:
+            if member_name is not None and zf is not None:
+                source_kind = "zipmod"
+                actual_name = normalize_zip_path(member_name)
+                compression = inspect_unity3d_member_compression(zf, member_name)
+                read_status = "readable" if compression != UNITY3D_COMPRESSION_UNKNOWN else "unreadable"
+                if read_status == "unreadable":
+                    read_error = "Unity3D 头部无法识别"
+            else:
+                game_path = resolve_game_unity3d_or_directory(game_dir, reference)
+                if game_path is not None and game_path.is_file():
+                    source_kind = "game"
+                    actual_name = normalize_zip_path(reference)
+                    with game_path.open("rb") as stream:
+                        compression = inspect_unity3d_stream_compression(
+                            stream,
+                            game_path.stat().st_size,
+                        )
+                    read_status = "readable" if compression != UNITY3D_COMPRESSION_UNKNOWN else "unreadable"
+                    if read_status == "unreadable":
+                        read_error = "Unity3D 头部无法识别"
+                else:
+                    read_error = read_error or "Unity3D 文件不存在"
+        except ZIPMOD_MEMBER_READ_ERRORS as exc:
+            read_status = "unreadable"
+            read_error = str(exc)
+
+        counts[compression] = counts.get(compression, 0) + 1
+        records.append(
+            {
+                "resource_path": reference,
+                "member_path": actual_name,
+                "source_kind": source_kind,
+                "compression": compression,
+                "read_status": read_status,
+                "read_error": read_error or "",
+            }
+        )
+    return records, counts
 
 
 def thumbnail_cache_path(
@@ -2296,6 +2703,50 @@ def zipmod_unity3d_diagnostics(
                 (zipmod_id,),
             )
         ]
+        item_count = int(zipmod["item_count"] or 0)
+        file_size = int(zipmod["file_size"] or 0)
+        has_large_uncompressed_average = (
+            int(zipmod["unity3d_uncompressed_count"] or 0) > 0
+            and item_count > 0
+            and file_size / item_count > UNCOMPRESSED_UNITY3D_AVERAGE_SIZE_BYTES
+        )
+        uncompressed_dependencies = []
+        if has_large_uncompressed_average:
+            uncompressed_dependencies = [
+                str(row["resource_path"] or "")
+                for row in conn.execute(
+                    """
+                    SELECT resource_path
+                    FROM zipmod_unity3d_dependencies
+                    WHERE zipmod_id = ?
+                      AND compression = 'none'
+                      AND read_status = 'readable'
+                    ORDER BY resource_path COLLATE NOCASE
+                    """,
+                    (zipmod_id,),
+                )
+                if str(row["resource_path"] or "").strip()
+            ]
+        if uncompressed_dependencies:
+            issues.append(
+                {
+                    "type": "unity3d_compression",
+                    "status": "uncompressed",
+                    "path": "__unity3d_uncompressed__",
+                    "affected_count": len(uncompressed_dependencies),
+                    "affected_items": [
+                        {
+                            "id": f"unity3d:{resource_path}",
+                            "item_id": resource_path,
+                            "name": Path(resource_path).name or resource_path,
+                            "csv_path": "",
+                        }
+                        for resource_path in uncompressed_dependencies
+                    ],
+                    "solution": "Repack or convert the referenced Unity3D files with block compression, then rebuild the database.",
+                    "repair_action": "repack_unity3d_lzma",
+                }
+            )
         if thumbnail_items:
             issues.append(
                 {
@@ -2333,6 +2784,7 @@ def zipmod_unity3d_diagnostics(
                 "unity3d_in_mod_count": zipmod["unity3d_in_mod_count"],
                 "unity3d_in_game_count": zipmod["unity3d_in_game_count"],
                 "unity3d_missing_count": zipmod["unity3d_missing_count"],
+                "unity3d_uncompressed_count": zipmod["unity3d_uncompressed_count"],
             },
             "can_delete": int(zipmod["unity3d_missing_count"] or 0) > 0
             and int(zipmod["unity3d_in_mod_count"] or 0) == 0
@@ -3438,6 +3890,304 @@ def repair_zipmod_unity3d_from_game(
         }
     finally:
         conn.close()
+
+
+def _compress_unity_lzma(data: bytes) -> bytes:
+    dictionary_size = 0x800000
+    compressor = lzma.LZMACompressor(
+        format=lzma.FORMAT_RAW,
+        filters=[
+            {
+                "id": lzma.FILTER_LZMA1,
+                "dict_size": dictionary_size,
+                "lc": 3,
+                "lp": 0,
+                "pb": 2,
+                "mode": lzma.MODE_NORMAL,
+                "mf": lzma.MF_BT4,
+                "nice_len": 123,
+            }
+        ],
+    )
+    payload = compressor.compress(data) + compressor.flush()
+    return struct.pack("<BI", 0x5D, dictionary_size) + payload
+
+
+def repack_unity3d_lzma_bytes(data: bytes) -> bytes:
+    """Rebuild a UnityFS format 6 bundle with LZMA data blocks.
+
+    The logical payload and bundle directory are preserved. Only the outer
+    block layout and compression flags are changed.
+    """
+
+    raw = bytes(data or b"")
+    cursor = 0
+
+    def cstring() -> bytes:
+        nonlocal cursor
+        end = raw.find(b"\0", cursor)
+        if end < 0:
+            raise ValueError("unterminated UnityFS header string")
+        value = raw[cursor:end]
+        cursor = end + 1
+        return value
+
+    signature = cstring()
+    if signature != b"UnityFS":
+        raise ValueError("only UnityFS bundles can be repacked")
+    version = struct.unpack_from(">I", raw, cursor)[0]
+    cursor += 4
+    if version != 6:
+        raise ValueError(f"only UnityFS format 6 is supported, got {version}")
+    cstring()
+    cstring()
+    declared_size, compressed_info_size, uncompressed_info_size, flags = struct.unpack_from(
+        ">QIII", raw, cursor
+    )
+    cursor += 20
+    if declared_size > len(raw):
+        raise ValueError("UnityFS declared size exceeds file size")
+    if flags & 0x1400:
+        raise ValueError("encrypted UnityFS bundles are not supported")
+
+    info_pos = declared_size - compressed_info_size if flags & 0x80 else cursor
+    data_pos = cursor if flags & 0x80 else cursor + compressed_info_size
+    if flags & 0x200:
+        data_pos = (data_pos + 15) & ~15
+    info_compressed = raw[info_pos : info_pos + compressed_info_size]
+    if len(info_compressed) != compressed_info_size:
+        raise ValueError("truncated UnityFS block info")
+    info = _decompress_unity_block_info(info_compressed, flags, uncompressed_info_size)
+    if len(info) < 20:
+        raise ValueError("invalid UnityFS block info")
+
+    info_cursor = 16
+    block_count = struct.unpack_from(">I", info, info_cursor)[0]
+    info_cursor += 4
+    blocks: list[tuple[int, int, bytes]] = []
+    payload_parts: list[bytes] = []
+    payload_cursor = data_pos
+    for _ in range(block_count):
+        uncompressed_size, compressed_size, block_flags = struct.unpack_from(">IIH", info, info_cursor)
+        info_cursor += 10
+        encoded = raw[payload_cursor : payload_cursor + compressed_size]
+        payload_cursor += compressed_size
+        mode = block_flags & 0x3F
+        if mode == 0:
+            decoded = encoded
+        elif mode in {1, 2, 3}:
+            decoded = _decompress_unity_block_info(encoded, mode, uncompressed_size)
+        else:
+            raise ValueError(f"unsupported UnityFS data block compression flag {mode}")
+        if len(decoded) != uncompressed_size:
+            raise ValueError("UnityFS data block size mismatch")
+        payload_parts.append(decoded)
+        blocks.append((uncompressed_size, compressed_size, encoded))
+    payload = b"".join(payload_parts)
+
+    node_count = struct.unpack_from(">I", info, info_cursor)[0]
+    info_cursor += 4
+    nodes: list[tuple[int, int, int, bytes]] = []
+    for _ in range(node_count):
+        node_offset, node_size, node_flags = struct.unpack_from(">QQI", info, info_cursor)
+        info_cursor += 20
+        name_end = info.find(b"\0", info_cursor)
+        if name_end < 0:
+            raise ValueError("unterminated UnityFS node name")
+        name = info[info_cursor:name_end]
+        info_cursor = name_end + 1
+        if node_offset + node_size > len(payload):
+            raise ValueError("UnityFS node exceeds decompressed payload")
+        nodes.append((node_offset, node_size, node_flags, name))
+
+    compressed_payload = bytearray()
+    new_blocks: list[tuple[int, int, int]] = []
+    for start in range(0, len(payload), 128 * 1024):
+        chunk = payload[start : start + 128 * 1024]
+        encoded = _compress_unity_lzma(chunk)
+        compressed_payload.extend(encoded)
+        new_blocks.append((len(chunk), len(encoded), 1))
+    if not payload:
+        new_blocks.append((0, len(_compress_unity_lzma(b"")), 1))
+        compressed_payload.extend(_compress_unity_lzma(b""))
+
+    info_writer = bytearray(info[:16])
+    info_writer += struct.pack(">I", len(new_blocks))
+    for uncompressed_size, compressed_size, block_flags in new_blocks:
+        info_writer += struct.pack(">IIH", uncompressed_size, compressed_size, block_flags)
+    info_writer += struct.pack(">I", len(nodes))
+    for node_offset, node_size, node_flags, name in nodes:
+        info_writer += struct.pack(">QQI", node_offset, node_size, node_flags)
+        info_writer += name + b"\0"
+    info_raw = bytes(info_writer)
+    info_lzma = _compress_unity_lzma(info_raw)
+
+    prefix = raw[: cursor - 20]
+    result_size = len(prefix) + 20 + len(compressed_payload) + len(info_lzma)
+    output = prefix + struct.pack(">QIII", result_size, len(info_lzma), len(info_raw), 0xC1)
+    output += compressed_payload + info_lzma
+    if len(output) != result_size:
+        raise AssertionError("rebuilt UnityFS size mismatch")
+    return output
+
+
+def repair_zipmod_unity3d_lzma(
+    zipmod_id: int,
+    db_path: Path = DEFAULT_DB_PATH,
+    thumbnail_dir: Path = DEFAULT_THUMBNAIL_DIR,
+) -> dict:
+    """Recompress uncompressed referenced Unity3D members and refresh the index."""
+
+    resolved = db_path.resolve()
+    if not resolved.exists() or not resolved.is_file():
+        return {"ok": False, "error": "Database not found"}
+    conn = sqlite3.connect(resolved)
+    conn.row_factory = sqlite3.Row
+    try:
+        init_db(conn)
+        zipmod = conn.execute("SELECT * FROM zipmods WHERE id = ?", (int(zipmod_id),)).fetchone()
+        if zipmod is None:
+            return {"ok": False, "error": f"Zipmod not found: {zipmod_id}"}
+        item_count = int(zipmod["item_count"] or 0)
+        file_size = int(zipmod["file_size"] or 0)
+        if (
+            int(zipmod["unity3d_uncompressed_count"] or 0) <= 0
+            or item_count <= 0
+            or file_size / item_count <= UNCOMPRESSED_UNITY3D_AVERAGE_SIZE_BYTES
+        ):
+            return {"ok": False, "error": "This zipmod does not meet the uncompressed Unity3D warning threshold"}
+
+        zipmod_path = Path(zipmod["file_path"]).resolve()
+        size_before = zipmod_path.stat().st_size
+        replacements: dict[str, bytes] = {}
+        skipped: list[dict[str, str]] = []
+        with zipfile.ZipFile(zipmod_path, "r") as zf:
+            index = ZipMemberIndex(zf)
+            dependency_rows = conn.execute(
+                """
+                SELECT resource_path
+                FROM zipmod_unity3d_dependencies
+                WHERE zipmod_id = ? AND compression = 'none' AND read_status = 'readable'
+                ORDER BY resource_path COLLATE NOCASE
+                """,
+                (int(zipmod_id),),
+            ).fetchall()
+            for row in dependency_rows:
+                resource_path = normalize_zip_path(str(row["resource_path"] or ""))
+                member = index.find_member(resource_path)
+                if not resource_path or member is None:
+                    skipped.append({"path": resource_path, "error": "Unity3D member not found in zipmod"})
+                    continue
+                try:
+                    replacements[member] = repack_unity3d_lzma_bytes(zf.read(member))
+                except (OSError, ValueError, struct.error, lzma.LZMAError) as exc:
+                    skipped.append({"path": resource_path, "error": str(exc)})
+        if not replacements:
+            return {"ok": False, "error": "No readable uncompressed Unity3D members could be repacked", "skipped": skipped}
+        rewrite_zip_members(zipmod_path, replacements)
+
+        now = utc_now()
+        stat = zipmod_path.stat()
+        size_after = stat.st_size
+        candidate = ZipmodCandidate(
+            manifest=read_manifest(zipmod_path),
+            path=zipmod_path,
+            relative_path=zipmod["relative_path"],
+            file_size=stat.st_size,
+            modified_at=timestamp_to_utc(stat.st_mtime),
+        )
+        game_dir = resolve_game_dir_from_zipmod(zipmod["file_path"], zipmod["relative_path"])
+        with conn:
+            _replace_mod_items(conn, game_dir, int(zipmod_id), candidate, thumbnail_dir, now)
+            conn.execute(
+                "UPDATE zipmods SET file_size = ?, modified_at = ?, updated_at = ? WHERE id = ?",
+                (candidate.file_size, candidate.modified_at, now, int(zipmod_id)),
+            )
+        return {
+            "ok": True,
+            "repacked": sorted(normalize_zip_path(path) for path in replacements),
+            "skipped": skipped,
+            "size_before": size_before,
+            "size_after": size_after,
+            "size_delta": size_after - size_before,
+            "size_saved": size_before - size_after,
+            "size_change_percent": ((size_after - size_before) / size_before * 100) if size_before else 0,
+            "message": f"Recompressed {len(replacements)} Unity3D file(s) with LZMA and rebuilt the zipmod",
+        }
+    except (OSError, zipfile.BadZipFile, ValueError, struct.error, lzma.LZMAError) as exc:
+        return {"ok": False, "error": str(exc)}
+    finally:
+        conn.close()
+
+
+def bulk_repack_zipmods_unity3d_lzma(
+    zipmod_ids: Iterable[int],
+    db_path: Path = DEFAULT_DB_PATH,
+    thumbnail_dir: Path = DEFAULT_THUMBNAIL_DIR,
+    progress_callback: Callable[[int, int, int], None] | None = None,
+) -> dict:
+    """Recompress eligible Unity3D members in each selected zipmod."""
+
+    ids_set: set[int] = set()
+    for zipmod_id in zipmod_ids:
+        try:
+            parsed_id = int(zipmod_id)
+        except (TypeError, ValueError):
+            continue
+        if parsed_id > 0:
+            ids_set.add(parsed_id)
+    ids = sorted(ids_set)
+    if not ids:
+        return {"ok": False, "error": "No zipmods selected"}
+
+    repaired: list[dict] = []
+    skipped: list[dict] = []
+    failures: list[dict] = []
+    skip_errors = {
+        "This zipmod does not meet the uncompressed Unity3D warning threshold",
+        "No readable uncompressed Unity3D members could be repacked",
+    }
+
+    for index, zipmod_id in enumerate(ids, start=1):
+        result = repair_zipmod_unity3d_lzma(
+            zipmod_id,
+            db_path=db_path,
+            thumbnail_dir=thumbnail_dir,
+        )
+        if result.get("ok"):
+            repaired.append({
+                "id": zipmod_id,
+                "repacked": result.get("repacked") or [],
+                "repacked_count": len(result.get("repacked") or []),
+                "size_before": result.get("size_before"),
+                "size_after": result.get("size_after"),
+                "size_delta": result.get("size_delta"),
+            })
+        else:
+            error = str(result.get("error") or "Recompression failed")
+            entry = {"id": zipmod_id, "reason": error}
+            if error in skip_errors:
+                skipped.append(entry)
+            else:
+                failures.append({"id": zipmod_id, "error": error})
+        if progress_callback:
+            progress_callback(index, len(ids), zipmod_id)
+
+    return {
+        "ok": len(failures) == 0 or len(repaired) > 0 or len(skipped) > 0,
+        "selected_count": len(ids),
+        "repaired_count": len(repaired),
+        "repacked_file_count": sum(item["repacked_count"] for item in repaired),
+        "total_size_before": sum(int(item["size_before"] or 0) for item in repaired),
+        "total_size_after": sum(int(item["size_after"] or 0) for item in repaired),
+        "total_size_delta": sum(int(item["size_delta"] or 0) for item in repaired),
+        "skipped_count": len(skipped),
+        "failure_count": len(failures),
+        "repaired": repaired,
+        "skipped": skipped,
+        "failures": failures,
+        "message": f"Recompressed {len(repaired)} zipmod(s), skipped {len(skipped)}, failed {len(failures)}",
+    }
 
 
 def bulk_repair_zipmods_unity3d_from_game(

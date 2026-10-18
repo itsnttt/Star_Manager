@@ -81,6 +81,12 @@ unity3d_in_game_count   需要从游戏目录补入的数量
 unity3d_other_mod_count 由其它 zipmod 提供的数量
 unity3d_missing_count   缺失 unity3d 引用的数量
 unity3d_error       unity3d 诊断摘要
+unity3d_compression    当所有依赖 Unity3D 类型一致时的兼容摘要；混合类型为空
+unity3d_uncompressed_count  Unity3D 无压缩包数量
+unity3d_lzma_count          Unity3D 使用 LZMA 包数量
+unity3d_lz4_count          Unity3D 使用 LZ4/LZ4HC 包数量
+unity3d_other_count        Unity3D 使用其它 Bundle 压缩方式包数量；当前包括 flags=4 的 LZHAM，以及 5–63 的保留/自定义值
+unity3d_unknown_count      Unity3D 头部损坏、受保护或无法识别的包数量
 scan_status         ok / missing_manifest / invalid_manifest / read_error / stale
 scan_error          扫描失败原因
 last_scanned_at     最近扫描时间
@@ -93,6 +99,22 @@ updated_at          最近更新时间
 推荐以 `guid` 作为 zipmod 的业务唯一定位。zipmod 可能因为整理、分类或用户手动移动而改变所在文件夹，但 `manifest.xml` 中的 `guid` 不应改变；扫描到相同 `guid` 时，应更新该记录的当前位置、文件名、大小、修改时间和扫描状态，而不是创建新的 zipmod 记录。
 
 `file_path` 表示当前文件位置，只用于打开文件、重扫和诊断，不作为 zipmod 的业务唯一键。
+
+### Unity3D 压缩方式检测
+
+**问题背景**：建库原先只检查 `.unity3d` 是否存在、是否能由 UnityPy 读取，无法回答模组资源使用无压缩、LZ4 还是其它 Unity Bundle 压缩方式。排查大包读取速度和受保护资源时，需要把这个信息和资源状态同时保留下来。
+
+**根因**：UnityFS 头部 flags 的低六位只描述块目录信息的压缩方式；实际资源数据块在解压后的 block-info 中各自有 flags。原扫描路径只读取 CSV 引用和 ZIP 目录，没有解析这些字段。
+
+**解决方案**：每次实际准备一个 zipmod 进行建库时，先解析 CSV 中真正被物品引用的 `.unity3d`，读取头部和压缩后的 block-info，不加载 UnityPy 资产对象。以实际数据块 flags 的低六位为准：`0` 记为 `none`，`1` 记为 `lzma`，`2`/`3`（LZ4/LZ4HC）记为 `lz4`，`4–63` 记为 `other`，缺失标准头或读取失败记为 `unknown`。因此目录信息使用 LZ4 而资源数据未压缩的包会记录为 `none`，LZMA 也不会归入其它压缩。明细写入 `zipmod_unity3d_dependencies`，每个依赖单独保存压缩类型和读取状态：成功识别并读取的包为 `readable`，文件存在但损坏、受保护或无法识别的包为 `unreadable`，找不到文件的包为 `missing`；三种状态分别展示为“可读”“不可读”“缺失”。旧的 `zipmods` 汇总字段只作为兼容数据，多种类型时不再写入统一压缩值。
+
+**验证结果**：后端测试覆盖 UnityFS flags 的无压缩、LZ4 和其它压缩分类；Python 源码编译检查通过。模组详情“物品”页签通过 `/mods/zipmods/:id/unity3d-dependencies` 显示每个依赖的文件名、压缩类型和可读状态，接口不返回用于展示的路径。
+
+**适用边界**：压缩类型描述的是 Unity Bundle 外层 block compression，不是 zipmod 外层 ZIP 的 Store/Deflate 方法，也不解码纹理内部格式。`other` 代表已读到可识别的 Unity Bundle 格式但未落入 0/1/2/3 的类型，当前 flags=4 是 Unity 的 LZHAM（项目内 UnityPy 标记为未实现），5–63 视为保留或自定义值；旧版 UnityRaw/UnityWeb 头部无法按 UnityFS flags 解析时也归入 `other`。自定义保护层、截断头或未识别的 bundle 记为 `unknown` 并标记不可读；不存在的资源单独标记缺失。检测只对本次建库实际处理的主索引 zipmod执行，不会替重复 GUID 的非主文件建立独立主记录。
+
+### 未压缩 Unity3D 模组警告
+
+当 `unity3d_uncompressed_count > 0` 且 `item_count > 0`、`file_size / item_count > 10 * 1024 * 1024` 时，模组列表状态显示为 `警告`，并纳入警告、全部异常和数据库警告计数；正常筛选会排除这类模组，状态筛选提供 `unity3d_uncompressed` 入口。物品数为 0 时不参与平均大小计算。诊断页从 `zipmod_unity3d_dependencies` 列出对应的可读 Unity3D 文件名。该警告只说明资源未使用 Bundle block compression 且模组平均物品体积较大，不代表资源缺失或不可读，也不会自动改写 zipmod。
 
 可建立索引：
 
@@ -469,7 +491,7 @@ GET /mods/items?offset=0&limit=500&search=&kind=&author=&status=&source=&game_di
 GET /mods/items?zipmod_id=<zipmod_id>&offset=0&limit=1000
 ```
 
-接口默认 `limit=500`，但当前前端每次请求 96 条，并使用表格/紧凑网格虚拟渲染可见窗口。首次请求带 `include_total=1`，后续分页带 `include_total=0`，依靠 `has_more` 判断是否继续加载；后续响应可以不计算 `total`，以避免每次滚动重复执行总数查询。`source=mod` 只返回 `mod_items`，`source=builtin` 返回当前 `game_dir` 的原版条目，`source=all` 合并两类来源。模组详情的“物品” tab 使用 `zipmod_id` 查询当前模组的关联物品，并展示缩略图、物品名、Kind 映射和状态。`search` 同时匹配名称、物品 ID、GUID、类别和来源路径；`status` 当前支持 `ready`、`error` 和 `thumb`。
+接口默认 `limit=500`，但当前前端每次请求 256 条，并使用表格/紧凑网格虚拟渲染可见窗口。首次请求带 `include_total=1`，后续分页带 `include_total=0`，依靠 `has_more` 判断是否继续加载；后续响应可以不计算 `total`，以避免每次滚动重复执行总数查询。`source=mod` 只返回 `mod_items`，`source=builtin` 返回当前 `game_dir` 的原版条目，`source=all` 合并两类来源。模组详情的“物品” tab 使用 `zipmod_id` 查询当前模组的关联物品，并展示缩略图、物品名、Kind 映射和状态。`search` 同时匹配名称、物品 ID、GUID、类别和来源路径；`status` 当前支持 `ready`、`error` 和 `thumb`。
 
 筛选项：
 
@@ -511,6 +533,8 @@ POST /mods/items/<id>/delete
 ```
 
 这些接口会直接改写 zipmod 或删除文件，调用侧必须走高风险确认或清晰的单项确认流程。
+
+未压缩 Unity3D 诊断项使用特殊路径 `__unity3d_uncompressed__` 调用同一个修复接口。后端会校验该模组满足未压缩警告阈值，只处理 `zipmod_unity3d_dependencies` 中可读且实际存在于当前归档的 `compression = 'none'` 成员；每个 UnityFS format 6 成员会用 LZMA 重新构建后原子替换，随后重扫模组并更新 SQLite 依赖压缩统计。无法处理的成员进入 `skipped`，全部无法处理时不会改写归档。
 
 当前实现还提供：
 
@@ -586,7 +610,7 @@ apps/backend/star_manager/
 - 从游戏原版 MapInfo 和场景包建立带有效 `HPointList`/`HPoint` 的 `__game_map_scene__` 地图记录，提取可用缩略图并支持只读场景模型预览。
 - 统计 zipmod 物品数、Unity3D 汇总、缩略图问题和角色卡依赖使用关系。
 - 支持 GUID、名称、作者、物品名称、Kind、状态和使用关系查询。
-- 物品浏览支持 `mod`、`builtin` 和 `all` 来源；当前前端以 96 条分页请求配合 `include_total`/`has_more` 增量加载。
+- 物品浏览支持 `mod`、`builtin` 和 `all` 来源；当前前端以 256 条分页请求配合 `include_total`/`has_more` 增量加载。
 - 单个坏 zipmod、坏 CSV 或不可读资源只记录错误，不中断整个扫描。
 - 角色卡数据库、BepInEx 插件缓存和本地成就复用同一 SQLite 文件。
 
@@ -668,7 +692,7 @@ Summary priority is `error` > `missing` > `not_in_mod` > `in_mod` > empty. An ex
 The renderer maps each zipmod row to a display state:
 
 - `错误`: `scan_status` is `missing_manifest`, `invalid`, or `invalid_manifest`; or `unity3d_status` is `missing` / `error`; or `unity3d_missing_count > 0`.
-- `警告`: author is empty; or `unity3d_not_in_mod_count > 0` (including `game_abdata` and `other_zipmod`); or there are duplicate zipmods for the same GUID; or `thumbnail_issue_count > 0`. Studio items (`item_domain = studio`) are not counted as thumbnail issues.
+- `警告`: author is empty; or `unity3d_not_in_mod_count > 0` (including `game_abdata` and `other_zipmod`); or `unity3d_uncompressed_count > 0` with `item_count > 0` and `file_size / item_count > 10 MiB`; or there are duplicate zipmods for the same GUID; or `thumbnail_issue_count > 0`. Studio items (`item_domain = studio`) are not counted as thumbnail issues.
 - `正常`: `scan_status = ok` and no earlier error/warning condition matched.
 - `读取失败`: `scan_status = error`.
 - `已失效`: `scan_status = stale`.
@@ -677,7 +701,7 @@ Backend zipmod list filters use similar but not identical query groups:
 
 - `status=normal`: `scan_status = ok`, author is present, no duplicate GUID, no thumbnail issue items, no missing/error Unity3D, and no `in_game`/`not_in_mod` Unity3D references.
 - `status=abnormal`: any non-`ok` scan status, empty author, missing/error Unity3D, any Unity3D resource outside the current zipmod, duplicate GUID, or thumbnail issue item.
-- `status=warning`: empty author, any Unity3D resource outside the current zipmod, duplicate GUID, or thumbnail issue item.
+- `status=warning`: empty author, any Unity3D resource outside the current zipmod, an uncompressed Unity3D dependency in a mod whose average item size is greater than 10 MiB, duplicate GUID, or thumbnail issue item. A zero-item mod does not participate in this average-size check.
 - Thumbnail issue filters and `thumbnail_issue_count` ignore Studio items, because they do not use thumbnails.
 - `status=error`: `scan_status = missing_manifest`, `unity3d_status = missing/error`, or `unity3d_missing_count > 0`.
 - `status=read_error`: the zipmod scan cannot read a manifest GUID, including missing `manifest.xml`, invalid manifest XML, missing/empty `<guid>`, or unreadable/bad zip files. This replaces the older separate `missing_manifest` and `read_error` filter entries in the UI.

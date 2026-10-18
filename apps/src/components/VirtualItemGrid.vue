@@ -137,6 +137,7 @@ watch(
         v-memo="[entry.row, isSelected(entry.row)]"
         type="button"
         class="compact-item-card"
+        :data-item-key="`${entry.row.sourceType || 'mod'}:${entry.row.id}`"
         :class="[
           { selected: isSelected(entry.row) },
           props.badgeClass(entry.row.status),

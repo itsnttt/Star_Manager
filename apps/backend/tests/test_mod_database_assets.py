@@ -1,5 +1,6 @@
 import sys
 import sqlite3
+import struct
 import unittest
 import zipfile
 import zlib
@@ -18,12 +19,14 @@ from star_manager.services.mod_database_assets import (  # noqa: E402
     DUAL_MAP_SCENE_KIND,
     GAME_MAP_SCENE_KIND,
     decode_csv_bytes_with_encoding,
+    detect_unity3d_compression,
     ensure_mod_item_thumbnail,
     extract_thumbnail_from_zipmod,
     find_zip_directory,
     find_zip_member,
     find_zip_unity3d_or_directory,
     inspect_unity3d_status,
+    inspect_zipmod_unity3d_compression,
     iter_open_zip_csv_items,
     normalize_abdata_path,
     preextract_zip_unity_thumbnails,
@@ -94,6 +97,39 @@ class ManifestParsingTests(unittest.TestCase):
         self.assertEqual(manifest.author, "")
         self.assertEqual(manifest.scan_status, "ok")
         self.assertEqual(manifest.scan_error, "")
+
+
+class Unity3dCompressionTests(unittest.TestCase):
+    @staticmethod
+    def _bundle_header(flags: int) -> bytes:
+        return (
+            b"UnityFS\x00"
+            + struct.pack(">I", 6)
+            + b"5.x\x00"
+            + b"2019.4.40f1\x00"
+            + struct.pack(">qIII", 100, 10, 20, flags)
+        )
+
+    def test_classifies_uncompressed_lzma_lz4_and_other_flags(self):
+        self.assertEqual(detect_unity3d_compression(self._bundle_header(0x40)), "none")
+        self.assertEqual(detect_unity3d_compression(self._bundle_header(0x41)), "lzma")
+        self.assertEqual(detect_unity3d_compression(self._bundle_header(0xC2)), "lz4")
+        self.assertEqual(detect_unity3d_compression(self._bundle_header(0x44)), "other")
+
+    def test_scans_all_unity3d_members_without_loading_assets(self):
+        with TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "compression.zipmod"
+            with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as archive:
+                archive.writestr("abdata/nope.unity3d", self._bundle_header(0x40))
+                archive.writestr("abdata/lzma.unity3d", self._bundle_header(0x41))
+                archive.writestr("abdata/lz4.unity3d", self._bundle_header(0xC2))
+                archive.writestr("abdata/other.unity3d", self._bundle_header(0x44))
+                archive.writestr("abdata/not-unity3d.unity3d", b"protected")
+            with zipfile.ZipFile(path, "r") as archive:
+                summary, counts = inspect_zipmod_unity3d_compression(archive)
+
+        self.assertEqual(summary, "")
+        self.assertEqual(counts, {"none": 1, "lzma": 1, "lz4": 1, "other": 1, "unknown": 1})
 
 
 class ThumbnailDiagnosticTests(unittest.TestCase):

@@ -46,6 +46,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, help="输出 FBX，默认追加 .tangent-repaired.fbx")
     parser.add_argument("--report", type=Path, help="另存 UTF-8 JSON 报告")
     parser.add_argument("--dry-run", action="store_true", help="只分析和计算，不写出 FBX")
+    parser.add_argument(
+        "--ignore-custom-normals",
+        action="store_true",
+        help="忽略源 FBX 自定义分割法线并按 Blender 法线重建切线。",
+    )
     parser.add_argument("--epsilon", type=float, default=DEFAULT_EPSILON)
     parser.add_argument("--uv-epsilon", type=float, default=DEFAULT_UV_EPSILON)
     return parser.parse_args(_script_args())
@@ -220,11 +225,11 @@ def _calculate_scene_tangents(epsilon: float, uv_epsilon: float) -> list[dict[st
     return mesh_reports
 
 
-def _import_fbx(path: Path) -> None:
+def _import_fbx(path: Path, *, use_custom_normals: bool) -> None:
     bpy.ops.wm.read_factory_settings(use_empty=True)
     result = bpy.ops.import_scene.fbx(
         filepath=str(path),
-        use_custom_normals=True,
+        use_custom_normals=use_custom_normals,
         use_anim=False,
         ignore_leaf_bones=False,
         automatic_bone_orientation=False,
@@ -293,6 +298,7 @@ def repair_fbx(
     epsilon: float,
     uv_epsilon: float,
     dry_run: bool,
+    use_custom_normals: bool,
 ) -> dict[str, object]:
     source = source.expanduser().resolve(strict=True)
     output = output.expanduser().resolve()
@@ -306,7 +312,7 @@ def repair_fbx(
         raise ValueError("epsilon 和 uv-epsilon 必须大于零")
 
     raw_before = _inspect_raw_tangent_layers(source, epsilon)
-    _import_fbx(source)
+    _import_fbx(source, use_custom_normals=use_custom_normals)
     before_meshes = _mesh_snapshot()
     before_armatures = _armature_snapshot()
     mesh_reports = _calculate_scene_tangents(epsilon, uv_epsilon)
@@ -314,6 +320,7 @@ def repair_fbx(
     report: dict[str, object] = {
         "ok": True,
         "dry_run": dry_run,
+        "use_custom_normals": use_custom_normals,
         "source": str(source),
         "output": None if dry_run else str(output),
         "source_sha256": _sha256(source),
@@ -349,7 +356,7 @@ def repair_fbx(
         if invalid_exported:
             raise ValueError(f"验证失败：导出的 FBX 仍有 {invalid_exported} 个无效切线向量")
 
-        _import_fbx(temporary_output)
+        _import_fbx(temporary_output, use_custom_normals=use_custom_normals)
         _compare_snapshots(
             before_meshes,
             _mesh_snapshot(),
@@ -375,6 +382,7 @@ def main() -> int:
             epsilon=args.epsilon,
             uv_epsilon=args.uv_epsilon,
             dry_run=args.dry_run,
+            use_custom_normals=not args.ignore_custom_normals,
         )
     except Exception as error:
         report = {

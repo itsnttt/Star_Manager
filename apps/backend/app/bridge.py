@@ -26,6 +26,7 @@ from star_manager.services.card_library import (
     add_character_card_tags,
     delete_character_card,
     export_character_dependency_package,
+    export_scene_character_cards,
     get_card_root,
     move_character_card,
 )
@@ -34,6 +35,7 @@ from star_manager.services.mod_database import (
     DEFAULT_THUMBNAIL_DIR,
     assess_card_file_changes,
     analyze_duplicate_zipmods,
+    bulk_repack_zipmods_unity3d_lzma,
     bulk_repair_zipmods_unity3d_from_game,
     build_database,
     index_single_zipmod,
@@ -81,8 +83,13 @@ class TaskState:
     current_file: str = ""
     phase_message: str = ""
     finished_at: float = 0
+    messages_truncated: int = 0
 
     def to_dict(self) -> dict:
+        # Large database builds can emit one progress message per indexed
+        # archive. Keep the task payload bounded so every 350 ms poll does not
+        # serialize and transfer an ever-growing log to the renderer.
+        messages = list(self.messages[-MAX_TASK_MESSAGES:])
         return {
             "id": self.id,
             "task_type": self.task_type,
@@ -90,7 +97,8 @@ class TaskState:
             "paused": self.status == "paused",
             "progress": self.progress,
             "title": self.title,
-            "messages": list(self.messages),
+            "messages": messages,
+            "messages_truncated": self.messages_truncated,
             "error": self.error,
             "data": self.data,
             "phase": self.phase,
@@ -175,6 +183,7 @@ SUPPORTED_TASK_TYPES = {
     "download_card_missing_mods",
     "import_external_zipmods",
     "export_character_dependency_package",
+    "export_scene_character_cards",
     "bulk_export_zipmods",
     "bulk_organize_zipmods",
     "organize_all_zipmods_by_author",
@@ -184,6 +193,7 @@ SUPPORTED_TASK_TYPES = {
     "bulk_add_character_card_tags",
     "bulk_move_character_cards",
     "bulk_repair_zipmods_unity3d",
+    "bulk_repack_zipmods_unity3d_lzma",
     "bulk_update_zipmod_authors",
     "bulk_apply_item_thumbnail",
     "bulk_delete_error_items",
@@ -265,7 +275,8 @@ SUPPORTED_API_ROUTES = {
     "/tasks/<task_id>/control",
 }
 
-BACKEND_REVISION = "sims4-workbench-tpose-mesh-v2-unity3d-preprocess-v1-game-item-probe-v2-hair-slots-card-load-v1-map-replace-v1-unity3d-export-v1-trash-v2-card-single-delete-v1-scene-remote-completion-v1-weighted-database-progress-v1-pending-delete-v1"
+BACKEND_REVISION = "sims4-workbench-tpose-mesh-v2-unity3d-preprocess-v1-game-item-probe-v2-hair-slots-card-load-v1-map-replace-v1-unity3d-export-v1-trash-v2-card-single-delete-v1-scene-remote-completion-v1-weighted-database-progress-v1-pending-delete-v1-import-perf-v1"
+MAX_TASK_MESSAGES = 400
 
 # The database task's top-bar progress is a weighted estimate of the phase
 # timings captured in the UI reference run. The mod database service reports
@@ -458,6 +469,9 @@ def build_reporter(task: TaskState) -> WorkflowReporter:
         task.updated_at = time()
 
     def add_message(text):
+        if len(task.messages) >= MAX_TASK_MESSAGES:
+            task.messages.pop(0)
+            task.messages_truncated += 1
         task.messages.append(text)
         task.updated_at = time()
 
@@ -838,8 +852,15 @@ def _external_unity3d_index(source_dir: Path) -> dict[str, Path]:
     return index
 
 
-def _repair_imported_zipmod_unity3d(zipmod_path: Path, source_dir: Path) -> dict:
-    source_index = _external_unity3d_index(source_dir)
+def _repair_imported_zipmod_unity3d(
+    zipmod_path: Path,
+    source_dir: Path,
+    source_index: dict[str, Path] | None = None,
+) -> dict:
+    # Build the external resource index once per import task. Re-scanning the
+    # complete source tree for every archive made large external folders scale
+    # as O(archives * source_files).
+    source_index = source_index if source_index is not None else _external_unity3d_index(source_dir)
     if not source_index:
         return {"repaired_count": 0, "moved": [], "missing": [], "source_count": 0}
 
@@ -957,6 +978,24 @@ def _import_external_zipmods(task: TaskState, payload: dict, reporter: WorkflowR
     imported_coordinates: list[dict] = []
     non_card_pngs: list[str] = []
     failures: list[dict] = []
+    external_unity3d_index = _external_unity3d_index(source_dir) if candidate_paths else {}
+    database_progress_messages = 0
+    database_progress_finished_reported = False
+
+    def report_import_database_progress(value: int, message: str) -> None:
+        """Keep the import task responsive while the database writes many rows."""
+        nonlocal database_progress_messages, database_progress_finished_reported
+        database_progress_messages += 1
+        reporter.progress(25 + value * 0.45, 100)
+        should_report = (
+            database_progress_messages == 1
+            or database_progress_messages % 100 == 0
+            or (value >= 100 and not database_progress_finished_reported)
+        )
+        if value >= 100:
+            database_progress_finished_reported = True
+        if should_report:
+            reporter.message(message)
 
     card_total = max(len(png_paths), 1)
     for index, source_path in enumerate(png_paths, start=1):
@@ -1004,7 +1043,11 @@ def _import_external_zipmods(task: TaskState, payload: dict, reporter: WorkflowR
                 suffix=".zipmod" if is_zip_source else None,
             )
             shutil.copy2(source_path, target_path)
-            repair_result = _repair_imported_zipmod_unity3d(target_path, source_dir)
+            repair_result = _repair_imported_zipmod_unity3d(
+                target_path,
+                source_dir,
+                source_index=external_unity3d_index,
+            )
             copied_item = {
                 "guid": manifest.guid,
                 "source_path": str(source_path),
@@ -1023,15 +1066,11 @@ def _import_external_zipmods(task: TaskState, payload: dict, reporter: WorkflowR
 
     if copied:
         reporter.message("Rebuilding database after import copy")
-        def report_database_progress(value: int, message: str) -> None:
-            reporter.progress(25 + value * 0.45, 100)
-            reporter.message(message)
-
         build_database(
             game_dir,
             db_path,
             thumbnail_dir,
-            report_database_progress,
+            report_import_database_progress,
             mode="incremental",
             **_database_worker_options(payload),
         )
@@ -1041,6 +1080,7 @@ def _import_external_zipmods(task: TaskState, payload: dict, reporter: WorkflowR
     skipped: list[dict] = []
     cleaned: list[dict] = []
     processed_guids: set[str] = set()
+    duplicate_refresh_required = False
     copied_by_guid: dict[str, list[dict]] = {}
     for item in copied:
         copied_by_guid.setdefault(str(item.get("guid") or ""), []).append(item)
@@ -1078,6 +1118,7 @@ def _import_external_zipmods(task: TaskState, payload: dict, reporter: WorkflowR
         if action == "promote":
             result = delete_primary_and_promote_duplicate(zipmod_id, promote_duplicate_id, db_path=db_path, thumbnail_dir=thumbnail_dir)
             if result.get("ok"):
+                duplicate_refresh_required = True
                 if cleanup_ids:
                     cleanup_result = cleanup_duplicate_zipmods(
                         int(result.get("promoted_zipmod_id") or zipmod_id),
@@ -1098,6 +1139,7 @@ def _import_external_zipmods(task: TaskState, payload: dict, reporter: WorkflowR
         elif action == "cleanup":
             result = cleanup_duplicate_zipmods(zipmod_id, duplicate_ids=cleanup_ids, db_path=db_path)
             if result.get("ok"):
+                duplicate_refresh_required = True
                 analysis_keep = (analysis.get("recommendation") or {}).get("keep") or {}
                 cleaned.append(
                     {
@@ -1132,12 +1174,12 @@ def _import_external_zipmods(task: TaskState, payload: dict, reporter: WorkflowR
     reporter.progress(96, 100)
     if copied or imported_cards:
         reporter.message("Refreshing database after duplicate decisions")
-        if copied:
+        if copied and duplicate_refresh_required:
             build_database(
                 game_dir,
                 db_path,
                 thumbnail_dir,
-                lambda _value, message: reporter.message(message),
+                report_import_database_progress,
                 mode="incremental",
                 **_database_worker_options(payload),
             )
@@ -1486,6 +1528,23 @@ def run_task(task: TaskState, payload: dict) -> None:
             if not task.data.get("ok"):
                 raise ValueError(str(task.data.get("error") or "便携依赖包生成失败"))
             reporter.message("便携依赖包已生成")
+        elif task.task_type == "export_scene_character_cards":
+            task.title = "导出场景卡人物"
+            reporter.message("正在读取场景卡中的人物数据")
+
+            def report_scene_export_progress(index: int, total: int, name: str) -> None:
+                set_step_progress(task, index, total)
+                reporter.message(f"已导出 {index}/{total} 张人物卡：{name}")
+
+            task.data = export_scene_character_cards(
+                str(payload.get("game_dir") or ""),
+                str(payload.get("path") or ""),
+                str(payload.get("target_dir") or ""),
+                progress_callback=report_scene_export_progress,
+            )
+            if not task.data.get("ok"):
+                raise ValueError(str(task.data.get("error") or "场景卡人物导出失败"))
+            reporter.message(str(task.data.get("message") or "场景卡人物导出完成"))
         elif task.task_type == "bulk_export_zipmods":
             zipmod_ids = parse_zipmod_ids(payload.get("zipmod_ids") or [])
             mode = str(payload.get("mode") or "copy")
@@ -1580,6 +1639,28 @@ def run_task(task: TaskState, payload: dict) -> None:
                 for item in (task.data.get("repaired") or [])
             )
             record_achievement_event("repairs", repair_count, f"task:{task.id}:unity3d")
+        elif task.task_type == "bulk_repack_zipmods_unity3d_lzma":
+            zipmod_ids = parse_zipmod_ids(payload.get("zipmod_ids") or [])
+            task.title = "Recompress selected zipmods"
+            reporter.message(f"Recompressing unity3d files for {len(zipmod_ids)} zipmod(s)")
+
+            def report_repack_progress(index: int, total: int, zipmod_id: int) -> None:
+                set_step_progress(task, index, total, start=5, end=95)
+                if should_report_step(index, total):
+                    reporter.message(f"Recompressed {index}/{total} zipmods; latest id {zipmod_id}")
+
+            task.data = bulk_repack_zipmods_unity3d_lzma(
+                zipmod_ids,
+                progress_callback=report_repack_progress,
+            )
+            reporter.message(str(task.data.get("message") or "unity3d recompression completed"))
+            if not task.data["ok"]:
+                raise ValueError("unity3d recompression failed")
+            record_achievement_event(
+                "repairs",
+                int(task.data.get("repacked_file_count") or 0),
+                f"task:{task.id}:unity3d-repack",
+            )
         elif task.task_type == "bulk_cleanup_duplicate_zipmods":
             zipmod_ids = parse_zipmod_ids(payload.get("zipmod_ids") or [])
             task.title = "Smart cleanup duplicate zipmods"

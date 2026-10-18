@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from bridge import SUPPORTED_TASK_TYPES, create_health_payload, task_store
 from star_manager.core.coordinate_card import find_png_end
+from star_manager.core.scene_card import inspect_scene_card_file
 from star_manager.services.achievements import (
     achievement_status,
     record_achievement_event,
@@ -78,7 +79,9 @@ from star_manager.services.mod_database import (
     list_workbench_template_items,
     list_zipmod_authors,
     list_zipmods,
+    list_zipmod_unity3d_dependencies,
     merge_duplicate_zipmod,
+    repair_zipmod_unity3d_lzma,
     repair_zipmod_unity3d_from_game,
     resolve_thumbnail_cache_path,
     prepare_item_unity3d_file,
@@ -428,6 +431,15 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "data": list_zipmod_authors()})
             return
 
+        if route.startswith("/mods/zipmods/") and route.endswith("/unity3d-dependencies"):
+            zipmod_id = self.parse_route_int(route, "/mods/zipmods/", "/unity3d-dependencies")
+            if zipmod_id is None:
+                self.send_json({"ok": False, "error": f"Invalid route: {route}"}, status=400)
+                return
+            result = list_zipmod_unity3d_dependencies(zipmod_id)
+            self.send_json(result, status=200 if result.get("ok") else 404)
+            return
+
         if route == "/mods/zipmods/by-guid":
             query = parse_qs(parsed_url.query)
             guid = str((query.get("guid") or [""])[0]).strip()
@@ -483,6 +495,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             usage = query.get("usage", [""])[0]
             source = query.get("source", ["mod"])[0]
             game_dir = unquote((query.get("game_dir") or [""])[0]).strip()
+            locate_source = query.get("locate_source", [""])[0]
+            locate_guid = query.get("locate_guid", [""])[0]
+            locate_slot = query.get("locate_slot", [""])[0]
+            locate_local_slot = query.get("locate_local_slot", [""])[0]
             include_total = (query.get("include_total", ["1"])[0] or "1").strip().lower() not in {"0", "false", "no"}
             self.send_json({
                 "ok": True,
@@ -498,6 +514,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                     source=source,
                     game_dir=game_dir or None,
                     include_total=include_total,
+                    locate_source=locate_source,
+                    locate_guid=locate_guid,
+                    locate_slot=locate_slot,
+                    locate_local_slot=locate_local_slot,
                 ),
             })
             return
@@ -673,6 +693,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if not valid:
                     raise ValueError(root_error or "Scene-card image not found.")
                 card_path = resolve_scene_file(root, relative_path)
+                if inspect_scene_card_file(card_path) is None:
+                    raise ValueError("Scene-card image not found.")
                 if original_cover:
                     stat = card_path.stat()
                     card_data = card_path.read_bytes()
@@ -737,7 +759,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     list_character_cards(
                         game_dir,
                         relative_path,
-                        recursive=scope == "library" and bool(tag.strip()),
+                        recursive=scope == "library",
                         tag=tag,
                         offset=offset,
                         limit=limit,
@@ -1081,9 +1103,16 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "error": f"Invalid route: {route}"}, status=400)
                 return
             reference_path = str(body.get("path") or "")
-            result = repair_zipmod_unity3d_from_game(zipmod_id, reference_path)
+            if reference_path == "__unity3d_uncompressed__":
+                result = repair_zipmod_unity3d_lzma(zipmod_id)
+            else:
+                result = repair_zipmod_unity3d_from_game(zipmod_id, reference_path)
             if result.get("ok"):
-                repair_count = len(result.get("moved") or []) + len(result.get("copied") or [])
+                repair_count = (
+                    len(result.get("moved") or [])
+                    + len(result.get("copied") or [])
+                    + len(result.get("repacked") or [])
+                )
                 record_achievement_event("repairs", repair_count, f"unity3d:{zipmod_id}:{reference_path}")
             self.send_json(result, status=200 if result.get("ok") else 400)
             return

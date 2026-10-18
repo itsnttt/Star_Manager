@@ -413,19 +413,18 @@ const cardModeMeta = computed(() => {
           <div class="character-layout">
             <section class="panel browser-panel">
               <div class="module-head">
-                <div><h1>人物卡浏览器（{{ ctx.cardBrowserCountText }}）</h1><p class="subtext mono">{{ ctx.cardFolderDisplay }}</p></div>
                 <div class="character-browser-head-actions">
                   <div
                     class="card-tag-scope-switch"
                     :class="{ 'is-library': ctx.cardTagFilter.scope === 'library' }"
                     role="group"
-                    aria-label="标签筛选范围"
+                    aria-label="人物卡浏览范围"
                   >
                     <button
                       type="button"
                       :class="{ active: ctx.cardTagFilter.scope === 'directory' }"
                       :aria-pressed="ctx.cardTagFilter.scope === 'directory'"
-                      title="只筛选当前目录中的人物卡"
+                      title="只显示当前目录中的人物卡"
                       @click="ctx.setCardTagScope('directory')"
                     >
                       当前目录
@@ -434,7 +433,7 @@ const cardModeMeta = computed(() => {
                       type="button"
                       :class="{ active: ctx.cardTagFilter.scope === 'library' }"
                       :aria-pressed="ctx.cardTagFilter.scope === 'library'"
-                      title="筛选整个人物卡库中的人物卡"
+                      title="递归显示人物卡库中的全部人物卡"
                       @click="ctx.setCardTagScope('library')"
                     >
                       人物卡库
@@ -444,8 +443,8 @@ const cardModeMeta = computed(() => {
                     class="module-icon-button card-browser-refresh-button"
                     type="button"
                     :disabled="ctx.cardLibrary.loading || !ctx.cardLibrary.validGameDir"
-                    aria-label="刷新当前目录人物卡"
-                    title="刷新当前目录人物卡"
+                    :aria-label="ctx.cardTagFilter.scope === 'library' ? '刷新人物卡库' : '刷新当前目录人物卡'"
+                    :title="ctx.cardTagFilter.scope === 'library' ? '刷新人物卡库' : '刷新当前目录人物卡'"
                     @click="ctx.refreshCurrentCardFolder"
                   >
                     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -457,7 +456,7 @@ const cardModeMeta = computed(() => {
                   </button>
                 </div>
               </div>
-              <div class="toolbar">
+              <div class="toolbar" :class="{ 'card-bulk-mode': ctx.cardBulkMode }">
                 <div class="toolbar-left">
                   <button
                     v-if="!ctx.cardBulkMode"
@@ -474,79 +473,21 @@ const cardModeMeta = computed(() => {
                     <span>已选 {{ ctx.selectedCount }} 张</span>
                     <button type="button" @click="ctx.exitCardBulkMode">退出</button>
                   </div>
-                  <div v-if="ctx.cardBulkMode" class="card-bulk-action-bar" aria-label="人物卡批量操作">
-                    <label class="card-select-all">
-                      <input
-                        type="checkbox"
-                        :checked="ctx.allVisibleCardsSelected"
-                        :indeterminate.prop="ctx.someVisibleCardsSelected"
-                        aria-label="全选当前文件夹人物卡"
-                        @change="ctx.toggleAllVisibleCards"
-                      >
-                      <span>全选</span>
-                    </label>
-                  </div>
-                  <div v-if="ctx.cardBulkMode" class="card-bulk-toolbar-actions" aria-label="人物卡批量操作">
-                    <button
-                      class="icon-action card-move-action"
-                      type="button"
-                      :disabled="ctx.selectedCount === 0 || !ctx.cardMoveAvailable || ctx.cardMovePrompt.busy"
-                      :aria-label="`移动已选择的 ${ctx.selectedCount} 张人物卡`"
-                      data-tooltip="移动人物卡"
-                      @click="ctx.openCardMovePrompt"
-                    >
-                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                        <path d="M3 7h7l2 2h9v10H3Z" />
-                        <path d="m12 12 2.5 2.5L12 17M14.5 14.5H8" />
-                      </svg>
-                      <span class="action-count" aria-hidden="true">{{ ctx.selectedCount }}</span>
-                    </button>
-                    <button
-                      class="icon-action card-tag-bulk-action"
-                      type="button"
-                      :disabled="ctx.selectedCount === 0 || ctx.bulkCardTagPrompt.busy"
-                      :aria-label="`为已选择的 ${ctx.selectedCount} 张人物卡添加标签`"
-                      data-tooltip="批量添加标签"
-                      @click="ctx.openBulkCardTagPrompt"
-                    >
-                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                        <path d="M4 5h9l7 7-8 8-8-8V5Z" />
-                        <circle cx="9" cy="10" r="1.5" />
-                        <path d="M16 5v6M13 8h6" />
-                      </svg>
-                      <span class="action-count" aria-hidden="true">{{ ctx.selectedCount }}</span>
-                    </button>
-                    <button
-                      class="icon-action card-delete-action"
-                      type="button"
-                      :disabled="ctx.selectedCount === 0 || ctx.cardDeletePrompt.busy"
-                      :aria-label="`删除已选择的 ${ctx.selectedCount} 张人物卡`"
-                      data-tooltip="删除人物卡"
-                      @click="ctx.openCardDeletePrompt"
-                    >
-                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                        <path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" />
-                      </svg>
-                      <span class="action-count" aria-hidden="true">{{ ctx.selectedCount }}</span>
-                    </button>
-                    <button
-                      class="primary icon-action extract-action"
-                      type="button"
-                      :disabled="ctx.selectedCount === 0 || ctx.isBusy"
-                      :aria-label="`提取依赖，已选择 ${ctx.selectedCount} 张人物卡`"
-                      data-tooltip="提取依赖"
-                      @click="ctx.openCardDependencyExportPrompt"
-                    >
-                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                        <path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07l-1.22 1.22" />
-                        <path d="M14 11a5 5 0 0 0-7.07 0L4.81 13.12a5 5 0 0 0 7.07 7.07l1.22-1.22" />
-                      </svg>
-                      <span class="action-count" aria-hidden="true">{{ ctx.selectedCount }}</span>
-                    </button>
-                  </div>
                 </div>
                 <div class="toolbar-right">
                   <div class="card-filter-toolbar-controls">
+                    <select
+                      v-if="ctx.cardTagFilter.scope === 'library'"
+                      class="card-gender-filter"
+                      :value="ctx.cardGenderFilter"
+                      aria-label="人物卡性别筛选"
+                      title="筛选人物卡性别"
+                      @change="ctx.setCardGenderFilter($event.target.value)"
+                    >
+                      <option value="all">全部性别</option>
+                      <option value="female">女性人物卡</option>
+                      <option value="male">男性人物卡</option>
+                    </select>
                     <button
                       class="card-favorite-filter"
                       :class="{ active: ctx.cardFavoriteFilter }"
@@ -658,17 +599,79 @@ const cardModeMeta = computed(() => {
                    </select>
                   </div>
                 </div>
+                <div v-if="ctx.cardBulkMode" class="character-bulk-toolbar" aria-label="人物卡批量操作">
+                  <label class="card-select-all">
+                    <input
+                      type="checkbox"
+                      :checked="ctx.allVisibleCardsSelected"
+                      :indeterminate.prop="ctx.someVisibleCardsSelected"
+                      aria-label="全选当前显示的人物卡"
+                      @change="ctx.toggleAllVisibleCards"
+                    >
+                    <span>全选</span>
+                  </label>
+                  <div class="card-bulk-toolbar-actions">
+                    <button
+                      class="icon-action card-move-action"
+                      type="button"
+                      :disabled="ctx.selectedCount === 0 || !ctx.cardMoveAvailable || ctx.cardMovePrompt.busy"
+                      :aria-label="`移动已选择的 ${ctx.selectedCount} 张人物卡`"
+                      data-tooltip="移动人物卡"
+                      @click="ctx.openCardMovePrompt"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M3 7h7l2 2h9v10H3Z" />
+                        <path d="m12 12 2.5 2.5L12 17M14.5 14.5H8" />
+                      </svg>
+                      <span class="action-count" aria-hidden="true">{{ ctx.selectedCount }}</span>
+                    </button>
+                    <button
+                      class="icon-action card-tag-bulk-action"
+                      type="button"
+                      :disabled="ctx.selectedCount === 0 || ctx.bulkCardTagPrompt.busy"
+                      :aria-label="`为已选择的 ${ctx.selectedCount} 张人物卡添加标签`"
+                      data-tooltip="批量添加标签"
+                      @click="ctx.openBulkCardTagPrompt"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M4 5h9l7 7-8 8-8-8V5Z" />
+                        <circle cx="9" cy="10" r="1.5" />
+                        <path d="M16 5v6M13 8h6" />
+                      </svg>
+                      <span class="action-count" aria-hidden="true">{{ ctx.selectedCount }}</span>
+                    </button>
+                    <button
+                      class="icon-action card-delete-action"
+                      type="button"
+                      :disabled="ctx.selectedCount === 0 || ctx.cardDeletePrompt.busy"
+                      :aria-label="`删除已选择的 ${ctx.selectedCount} 张人物卡`"
+                      data-tooltip="删除人物卡"
+                      @click="ctx.openCardDeletePrompt"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" />
+                      </svg>
+                      <span class="action-count" aria-hidden="true">{{ ctx.selectedCount }}</span>
+                    </button>
+                    <button
+                      class="primary icon-action extract-action"
+                      type="button"
+                      :disabled="ctx.selectedCount === 0 || ctx.isBusy"
+                      :aria-label="`提取依赖，已选择 ${ctx.selectedCount} 张人物卡`"
+                      data-tooltip="提取依赖"
+                      @click="ctx.openCardDependencyExportPrompt"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07l-1.22 1.22" />
+                        <path d="M14 11a5 5 0 0 0-7.07 0L4.81 13.12a5 5 0 0 0 7.07 7.07l1.22-1.22" />
+                      </svg>
+                      <span class="action-count" aria-hidden="true">{{ ctx.selectedCount }}</span>
+                    </button>
+                  </div>
+                </div>
               </div>
               <div ref="characterCardGrid" class="card-grid" @scroll.passive="handleCharacterCardGridScroll">
-                <div v-if="ctx.cardTagFilter.resultsLoading" class="card-state">
-                  <strong>正在筛选整个人物卡库</strong>
-                  <span class="subtext">正在查找带有“{{ ctx.cardTagFilter.libraryTag }}”标签的人物卡</span>
-                </div>
-                <div v-else-if="ctx.cardTagFilter.resultsError" class="card-state">
-                  <strong>全库标签筛选失败</strong>
-                  <span class="subtext">{{ ctx.cardTagFilter.resultsError }}</span>
-                </div>
-                <div v-else-if="ctx.cardLibrary.loading && ctx.cards.length === 0" class="card-state">
+                <div v-if="ctx.cardLibrary.loading && ctx.cards.length === 0" class="card-state">
                   <LoadingAnimation class="card-loading-animation" :animation-data="characterCardLoadingAnimation" />
                   <strong>正在加载人物卡</strong>
                 </div>
@@ -680,8 +683,8 @@ const cardModeMeta = computed(() => {
                 </div>
                 <div v-else-if="ctx.visibleCards.length === 0" class="card-state">
                   <LoadingAnimation class="card-empty-loading-animation" :animation-data="characterCardEmptyAnimation" />
-                  <strong>{{ ctx.cardFavoriteFilter && (ctx.cards.length || ctx.cardTagFilter.libraryCards.length) ? '当前筛选没有收藏的人物卡' : ctx.cardDependencyFilter === 'missing' && ctx.cards.length ? '当前目录没有依赖缺失的人物卡' : ctx.cardDependencyFilter === 'normal' && ctx.cards.length ? '当前目录没有无依赖缺失的人物卡' : ctx.cardDependencyFilter.startsWith('tag:') && ctx.cardTagFilter.scope === 'library' ? `人物卡库中没有“${ctx.cardDependencyFilter.slice(4)}”标签的人物卡` : ctx.cardDependencyFilter.startsWith('tag:') && ctx.cards.length ? `当前目录没有“${ctx.cardDependencyFilter.slice(4)}”标签的人物卡` : '未找到人物卡' }}</strong>
-                  <span class="subtext mono">{{ ctx.cardTagFilter.scope === 'library' && ctx.cardDependencyFilter.startsWith('tag:') ? 'UserData/chara · 全库' : ctx.cardFolderDisplay }}</span>
+                  <strong>{{ ctx.cardFavoriteFilter && ctx.cards.length ? '当前筛选没有收藏的人物卡' : ctx.cardDependencyFilter === 'missing' && ctx.cards.length ? '当前范围没有依赖缺失的人物卡' : ctx.cardDependencyFilter === 'normal' && ctx.cards.length ? '当前范围没有无依赖缺失的人物卡' : ctx.cardDependencyFilter.startsWith('tag:') && ctx.cardTagFilter.scope === 'library' ? `人物卡库中没有“${ctx.cardDependencyFilter.slice(4)}”标签的人物卡` : ctx.cardDependencyFilter.startsWith('tag:') && ctx.cards.length ? `当前目录没有“${ctx.cardDependencyFilter.slice(4)}”标签的人物卡` : '未找到人物卡' }}</strong>
+                  <span class="subtext mono">{{ ctx.cardBrowserPathDisplay }}</span>
                 </div>
                 <VirtualCharacterCardGrid
                   v-else
@@ -697,15 +700,15 @@ const cardModeMeta = computed(() => {
             <aside class="panel side-panel character-side-panel">
               <div class="module-head character-side-head">
                 <div>
-                  <h2>{{ ctx.characterSideMode === 'tree' ? '卡片目录' : '卡片详情' }}</h2>
-                  <p v-if="ctx.characterSideMode === 'tree'" class="subtext">UserData/chara</p>
+                  <h2>{{ ctx.cardTagFilter.scope === 'library' || ctx.characterSideMode === 'detail' ? '卡片详情' : '卡片目录' }}</h2>
+                  <p v-if="ctx.cardTagFilter.scope !== 'library' && ctx.characterSideMode === 'tree'" class="subtext">UserData/chara</p>
                 </div>
-                <div class="side-toggle" aria-label="卡片侧栏视图">
+                <div v-if="ctx.cardTagFilter.scope !== 'library'" class="side-toggle" aria-label="卡片侧栏视图">
                   <button type="button" :class="{ active: ctx.characterSideMode === 'tree' }" @click="ctx.characterSideMode = 'tree'">目录</button>
                   <button type="button" :class="{ active: ctx.characterSideMode === 'detail' }" @click="ctx.characterSideMode = 'detail'">详情</button>
                 </div>
               </div>
-              <div v-if="ctx.characterSideMode === 'tree'" class="tree">
+              <div v-if="ctx.cardTagFilter.scope !== 'library' && ctx.characterSideMode === 'tree'" class="tree">
                 <div v-if="ctx.cardLibrary.checked && !ctx.cardLibrary.validGameDir" class="tree-state">请选择有效的游戏目录</div>
                 <VirtualCharacterCardTree
                   v-else
@@ -811,7 +814,7 @@ const cardModeMeta = computed(() => {
                       </div>
                     </section>
                     <section class="card-tags-section" aria-labelledby="card-tags-title">
-                      <span id="card-tags-title" class="card-tags-title">人物卡标签</span>
+                      <span id="card-tags-title" class="card-tags-title">标签</span>
                       <div class="card-tag-list">
                         <span
                           v-for="(tag, tagIndex) in ctx.selectedCardDetail.tags"
@@ -923,20 +926,6 @@ const cardModeMeta = computed(() => {
                             <strong>{{ ctx.selectedCardDependencies.length }}</strong>
                             项物品依赖
                           </span>
-                          <div class="card-dependency-overview-actions">
-                            <button
-                              v-if="ctx.cardDependencyRemoteSummary.missingCount > 0 && ctx.cardDependencyRemoteSummary.availableCount > 0"
-                              type="button"
-                              class="card-dependency-install-all"
-                              :disabled="ctx.cardDependencyRemoteBusy && !ctx.cardDependencyRemote.allTaskId"
-                              :title="ctx.cardDependencyRemote.allTaskId ? (ctx.cardDependencyRemote.allStatus === 'paused' ? '点击继续任务' : '点击暂停任务') : '安装全部可获取的缺失模组'"
-                              @click.stop="ctx.cardDependencyRemote.allTaskId ? ctx.toggleAllCardDependencies() : ctx.installAllCardDependencies()"
-                            >
-                              {{ ctx.cardDependencyRemote.allTaskId
-                                ? (ctx.cardDependencyRemote.allStatus === 'paused' ? '继续全部' : '暂停全部')
-                                : (ctx.cardDependencyRemoteBusy ? '准备中...' : '全部安装') }}
-                            </button>
-                          </div>
                         </div>
                         <section
                           v-for="group in cardDependencyGroups"
@@ -948,9 +937,20 @@ const cardModeMeta = computed(() => {
                             <span class="dependency-group-title">
                               <strong>{{ group.label }}</strong>
                             </span>
-                            <span class="dependency-group-count">
-                              {{ group.items.length }}
-                              <small v-if="group.missingCount">缺 {{ group.missingCount }}</small>
+                            <span class="dependency-group-head-actions">
+                              <button
+                                v-if="group.key === 'missing-mod' && ctx.cardDependencyRemoteSummary.missingCount > 0 && ctx.cardDependencyRemoteSummary.availableCount > 0"
+                                type="button"
+                                class="card-dependency-install-all"
+                                :disabled="ctx.cardDependencyRemoteBusy && !ctx.cardDependencyRemote.allTaskId"
+                                :title="ctx.cardDependencyRemote.allTaskId ? (ctx.cardDependencyRemote.allStatus === 'paused' ? '点击继续任务' : '点击暂停任务') : '安装全部可获取的缺失模组'"
+                                @click.stop="ctx.cardDependencyRemote.allTaskId ? ctx.toggleAllCardDependencies() : ctx.installAllCardDependencies()"
+                              >
+                                {{ ctx.cardDependencyRemote.allTaskId
+                                  ? (ctx.cardDependencyRemote.allStatus === 'paused' ? '继续全部' : '暂停全部')
+                                  : (ctx.cardDependencyRemoteBusy ? '准备中...' : '全部安装') }}
+                              </button>
+                              <span class="dependency-group-count">{{ group.items.length }}</span>
                             </span>
                           </header>
                           <div class="card-dependency-list">
@@ -1554,20 +1554,6 @@ const cardModeMeta = computed(() => {
                   <strong>{{ ctx.selectedClothesCard.dependencies.length }}</strong>项物品依赖
                   <small v-if="ctx.clothesDependencyRemoteSummary.availableCount">可补全 {{ ctx.clothesDependencyRemoteSummary.availableCount }} 个模组</small>
                 </span>
-                <div class="card-dependency-overview-actions">
-                  <button
-                    v-if="ctx.clothesDependencyRemoteSummary.missingCount > 0 && ctx.clothesDependencyRemoteSummary.availableCount > 0"
-                    type="button"
-                    class="card-dependency-install-all"
-                    :disabled="ctx.cardDependencyRemoteBusy && !ctx.cardDependencyRemote.allTaskId"
-                    :title="ctx.cardDependencyRemote.allTaskId ? (ctx.cardDependencyRemote.allStatus === 'paused' ? '点击继续任务' : '点击暂停任务') : '安装全部可获取的缺失模组'"
-                    @click.stop="ctx.cardDependencyRemote.allTaskId ? ctx.toggleAllCardDependencies() : ctx.installAllCardDependencies()"
-                  >
-                    {{ ctx.cardDependencyRemote.allTaskId
-                      ? (ctx.cardDependencyRemote.allStatus === 'paused' ? '继续全部' : '暂停全部')
-                      : (ctx.cardDependencyRemoteBusy ? '准备中...' : '全部安装') }}
-                  </button>
-                </div>
               </div>
               <section
                 v-for="group in clothesDependencyGroups"
@@ -1579,7 +1565,21 @@ const cardModeMeta = computed(() => {
                   <span class="dependency-group-title">
                     <strong>{{ group.label }}</strong>
                   </span>
-                  <span class="dependency-group-count">{{ group.items.length }}</span>
+                  <span class="dependency-group-head-actions">
+                    <button
+                      v-if="group.key === 'missing-mod' && ctx.clothesDependencyRemoteSummary.missingCount > 0 && ctx.clothesDependencyRemoteSummary.availableCount > 0"
+                      type="button"
+                      class="card-dependency-install-all"
+                      :disabled="ctx.cardDependencyRemoteBusy && !ctx.cardDependencyRemote.allTaskId"
+                      :title="ctx.cardDependencyRemote.allTaskId ? (ctx.cardDependencyRemote.allStatus === 'paused' ? '点击继续任务' : '点击暂停任务') : '安装全部可获取的缺失模组'"
+                      @click.stop="ctx.cardDependencyRemote.allTaskId ? ctx.toggleAllCardDependencies() : ctx.installAllCardDependencies()"
+                    >
+                      {{ ctx.cardDependencyRemote.allTaskId
+                        ? (ctx.cardDependencyRemote.allStatus === 'paused' ? '继续全部' : '暂停全部')
+                        : (ctx.cardDependencyRemoteBusy ? '准备中...' : '全部安装') }}
+                    </button>
+                    <span class="dependency-group-count">{{ group.items.length }}</span>
+                  </span>
                 </header>
                 <div class="card-dependency-list">
                   <div
@@ -1774,6 +1774,13 @@ const cardModeMeta = computed(() => {
               :class="{ active: ctx.sceneDetailTab === '关联' }"
               @click="ctx.sceneDetailTab = '关联'"
             >关联</button>
+            <button
+              type="button"
+              role="tab"
+              :aria-selected="ctx.sceneDetailTab === '工具'"
+              :class="{ active: ctx.sceneDetailTab === '工具' }"
+              @click="ctx.sceneDetailTab = '工具'"
+            >工具</button>
           </div>
           <div v-if="ctx.sceneDetailTab === '详情'" class="clothes-detail-tab-panel">
             <h2 class="clothes-detail-title">{{ ctx.selectedSceneCard.name }}</h2>
@@ -1784,6 +1791,36 @@ const cardModeMeta = computed(() => {
             </div>
             <button class="clothes-open-directory" type="button" @click="ctx.openSceneDirectory(ctx.selectedSceneCard.directory)">打开所在目录</button>
           </div>
+          <div v-else-if="ctx.sceneDetailTab === '工具'" class="clothes-detail-tab-panel scene-detail-tools-panel">
+            <div class="scene-detail-tool-card">
+              <div>
+                <strong>提取场景人物卡</strong>
+              </div>
+            <button
+              v-if="ctx.selectedSceneCard.embedded_character_count"
+              class="clothes-open-directory scene-character-export-button"
+              type="button"
+              :disabled="ctx.exportingSceneCharacters || ctx.isBusy"
+              @click="ctx.exportSelectedSceneCharacters"
+            >
+              {{ ctx.exportingSceneCharacters ? '导出中…' : `导出场景人物卡（${ctx.selectedSceneCard.embedded_character_count}）` }}
+            </button>
+            <div v-if="!ctx.selectedSceneCard.embedded_character_count" class="clothes-detail-empty">当前场景没有可提取的人物卡。</div>
+            </div>
+            <div
+              v-if="ctx.sceneCharacterExportNotice.message"
+              class="detail-inline-state scene-character-export-notice"
+              :class="ctx.sceneCharacterExportNotice.type"
+              role="status"
+            >
+              <span>{{ ctx.sceneCharacterExportNotice.message }}</span>
+              <button
+                v-if="ctx.sceneCharacterExportNotice.path"
+                type="button"
+                @click="ctx.revealSceneCharacterExport"
+              >打开位置</button>
+            </div>
+          </div>
           <div v-else-if="ctx.sceneDetailTab === '关联'" class="clothes-detail-tab-panel">
             <div v-if="ctx.sceneLibrary.detailLoading" class="detail-inline-state">正在解析场景卡依赖...</div>
             <div v-else-if="!ctx.selectedSceneCard.dependencies?.length" class="clothes-detail-empty">暂无关联模组。</div>
@@ -1793,20 +1830,6 @@ const cardModeMeta = computed(() => {
                   <strong>{{ sceneDependencyDisplayCount }}</strong>项场景依赖
                   <small v-if="ctx.sceneDependencyRemoteSummary.availableCount">可补全 {{ ctx.sceneDependencyRemoteSummary.availableCount }} 个模组</small>
                 </span>
-                <div class="card-dependency-overview-actions">
-                  <button
-                    v-if="ctx.sceneDependencyRemoteSummary.missingCount > 0 && ctx.sceneDependencyRemoteSummary.availableCount > 0"
-                    type="button"
-                    class="card-dependency-install-all"
-                    :disabled="ctx.cardDependencyRemoteBusy && !ctx.cardDependencyRemote.allTaskId"
-                    :title="ctx.cardDependencyRemote.allTaskId ? (ctx.cardDependencyRemote.allStatus === 'paused' ? '点击继续任务' : '点击暂停任务') : '安装全部可获取的缺失模组'"
-                    @click.stop="ctx.cardDependencyRemote.allTaskId ? ctx.toggleAllCardDependencies() : ctx.installAllCardDependencies()"
-                  >
-                    {{ ctx.cardDependencyRemote.allTaskId
-                      ? (ctx.cardDependencyRemote.allStatus === 'paused' ? '继续全部' : '暂停全部')
-                      : (ctx.cardDependencyRemoteBusy ? '准备中...' : '全部安装') }}
-                  </button>
-                </div>
               </div>
               <section
                 v-for="group in sceneDependencyGroups"
@@ -1816,7 +1839,21 @@ const cardModeMeta = computed(() => {
               >
                 <header class="card-dependency-group-head">
                   <span class="dependency-group-title"><strong>{{ group.label }}</strong></span>
-                  <span class="dependency-group-count">{{ group.items.length }}</span>
+                  <span class="dependency-group-head-actions">
+                    <button
+                      v-if="group.key === 'missing-mod' && ctx.sceneDependencyRemoteSummary.missingCount > 0 && ctx.sceneDependencyRemoteSummary.availableCount > 0"
+                      type="button"
+                      class="card-dependency-install-all"
+                      :disabled="ctx.cardDependencyRemoteBusy && !ctx.cardDependencyRemote.allTaskId"
+                      :title="ctx.cardDependencyRemote.allTaskId ? (ctx.cardDependencyRemote.allStatus === 'paused' ? '点击继续任务' : '点击暂停任务') : '安装全部可获取的缺失模组'"
+                      @click.stop="ctx.cardDependencyRemote.allTaskId ? ctx.toggleAllCardDependencies() : ctx.installAllCardDependencies()"
+                    >
+                      {{ ctx.cardDependencyRemote.allTaskId
+                        ? (ctx.cardDependencyRemote.allStatus === 'paused' ? '继续全部' : '暂停全部')
+                        : (ctx.cardDependencyRemoteBusy ? '准备中...' : '全部安装') }}
+                    </button>
+                    <span class="dependency-group-count">{{ group.items.length }}</span>
+                  </span>
                 </header>
                 <div class="card-dependency-list">
                   <div

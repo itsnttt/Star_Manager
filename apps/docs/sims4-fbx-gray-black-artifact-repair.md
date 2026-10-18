@@ -221,3 +221,31 @@
 `D:\Workspace\Star_workspace\B051\SEOULSOUL_2026__146_Shorts_lod0_fbx\SEOULSOUL_2026__146_Shorts_model01_lod0_37E0069F3E831243.outside-tangent-repaired.fbx`
 
 最终副本 SHA-256 为 `6e1c3af3b273569706729d32d5095200c89166f2ef8e4537608177e8ad6602ee`。验证通过：FBX 仍为 7400，网格仍为 1,585 个顶点、2,335 个三角面、7,005 个面角点和 2 套 UV；两套 tangent/binormal 各 7,005 个向量，`invalid_count=0`。后续导入或查看时应使用此 `outside-tangent-repaired.fbx`，不要继续使用只清除自定义法线的旧副本。
+
+## 2026-10-07 T084 西装领口双黑三角案例
+
+### 问题背景
+
+`D:\Workspace\Star_workspace\T084\SEOULSOUL_2026__171_Suit_V1_Fixed_Shape_lod0_fbx\SEOULSOUL_2026__171_Suit_V1_Fixed_Shape_model01_lod0_FF4D0F58FA005976.fbx` 在游戏领口处出现两个黑色三角形。原始 FBX 未覆盖，修复副本写回同目录。
+
+### 根因
+
+源文件为 FBX 7400，包含 6,599 个顶点、10,315 个三角面、30,945 个面角、2 套 UV 和 1 个材质，但没有显式 tangent/binormal 层。常规面绕序扫描和位置容差 `0.001`、法线点积 `-0.995` 的近重合反向面扫描均为 0。对领口附近面 5834 检查时，`UVChannel_2` 的 Blender MikkTSpace 计算在面角 17502 产生零切线；该结果只在导入源 FBX 的自定义分割法线时出现，忽略自定义法线后切线恢复有效。因此黑三角来自自定义法线与切线空间重建不一致，未发现需要删除的几何重复面。
+
+### 解决方案
+
+使用 `apps/scripts/blender_repair_fbx_tangents.py --ignore-custom-normals` 导入源 FBX，按 Blender 重建的法线为 `UVChannel_1` 和 `UVChannel_2` 写入 MikkTSpace tangent/binormal。修复不翻转面、不删除面、不重建 UV、不覆盖源文件。输出文件为：
+
+`D:\Workspace\Star_workspace\T084\SEOULSOUL_2026__171_Suit_V1_Fixed_Shape_lod0_fbx\SEOULSOUL_2026__171_Suit_V1_Fixed_Shape_model01_lod0_FF4D0F58FA005976.tangent-repaired.fbx`
+
+### 验证结果
+
+- 源文件 SHA-256：`7DDD7E40CB855E5BA575D3372CBBD95A8B12F7D4FAA95244FAC68D019032666D`。
+- 修复文件 SHA-256：`91113A13D170D6EEF1A7CBC0D25E5C12756E80EACD01AF72D39C97DCC9CE0297`。
+- 输出仍为 FBX 7400，网格仍为 6,599 个顶点、10,315 个三角面、30,945 个面角和 2 套 UV。
+- 输出包含 2 个 tangent 层和 2 个 binormal 层，每层 30,945 个向量；4 层 `invalid_count=0`，Blender 重新导入拓扑、材质、骨架和顶点组验证通过。
+- 源文件哈希和修改时间未改变。UV 中原有的零面积面仍保留，避免改变贴图映射。
+
+### 适用边界
+
+导入 Unity/SB3Utility 时应让导入器使用 FBX 自带 Normals/Tangents，并确认实际绑定 `*.tangent-repaired.fbx`。如果导入器强制重新计算切线，应同时关闭“使用源自定义法线”或使用与 FBX tangent 一致的法线重建设置；若仍有黑块，再检查 shader 的 UV 通道、Alpha/Cutout、双面 `VFACE` 和其它网格相交情况。

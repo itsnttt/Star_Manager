@@ -143,6 +143,24 @@ KKEx
 
 人物卡详情会把 `Coordinate` 的服装部件和配饰部件交给原版资源索引，按 `CategoryNo + ID` 合并到 UAR 依赖结果中。原版记录使用 `source_type=builtin`，不需要 `ModID`，也不会进入远程模组补全流程。如果 UAR 已经声明同一服装部位，UAR 记录优先，原版候选不会重复加入。
 
+### 人物卡依赖列表与游戏面部槽位不是同一份清单
+
+人物卡详情中的“面部与五官”数量表示卡片 `KKEx` 中解析到的
+UniversalAutoResolver（UAR）模组记录。它只列出带 `ModID` 的模组依赖；当前实现不会把
+`Custom` 区块中的原版面型、眉毛、眼影、腮红、口红等内置面部资源当作 zipmod 依赖加入，
+也不会把空槽位加入依赖列表。
+
+游戏物品探针的 `/api/current.faces` 则按女性角色的固定面部栏位读取运行时状态：面型、面部肌肤、
+面部细节、眉毛、睫毛、眼影、腮红、口红、眼睛高光、痣/雀斑，以及左右眼各自的美瞳和瞳孔，
+最多返回 14 条。每条包含当前 `CategoryNo + LocalSlot`，即使该物品是原版资源或 `LocalSlot=0`
+的未装配槽位也会保留。因此两边数量不同是预期行为；核对同一张卡时，应按
+`CategoryNo`、`LocalSlot` 和 UAR `ModID` 对照，而不要直接比较列表长度。
+
+例如，若管理器显示 5 条面部依赖，而游戏返回 14 个面部槽位，只要这 5 条 UAR 记录分别在
+游戏状态中找到（其余条目为原版或空槽），就不能据此判断人物卡依赖解析遗漏。要核查卡片是否
+确实声明了某一模组，应直接读取卡片 PNG 的 `KKEx` UAR 记录，并与游戏状态采集时的
+`resolverRecords` 对照；游戏运行时列表本身不是卡片依赖清单。
+
 ## Verified bone and texture storage in one HS2 character card
 
 The following findings were verified against the standalone card with id

@@ -692,3 +692,43 @@ E:\download\南海二次加密\yu_decrypted
 两个输出包均已确认包含 `manifest.xml`、全部原 CSV 和 CSV 引用的 Unity3D 路径，zip CRC 校验通过。恢复资源的静态验证结果分别为 `5260` 个对象/`23` 张纹理和 `5291` 个对象/`30` 张纹理。
 
 静态验证还发现部分 CSV 的 `MainData` 在恢复资源的 AssetBundle 容器中没有同名入口：v5 包涉及 `madai`、`lianku`、`lianti2`，普通包涉及 `back`、`headq`、`headr`、`headl`、`leg`、`piaodai`。因此本次只按 CSV 路径完成打包，没有擅自改写 CSV 或猜测性重命名 Unity3D 容器；这些条目仍需在 HS2 游戏内实际加载确认，必要时再依据同作者正常资源决定映射。
+
+## `nikki120` 的 NB 固定前缀保护
+
+### 样本和根因
+
+对照以下两个同 GUID、同路径的 zipmod：
+
+```text
+E:\shixiao\mdgq\nikki120.zipmod
+E:\game\HoneySelect 2 DX - TSYMQ\mods\Imported\nikki120.zipmod
+```
+
+两个包都只有一个 Unity3D 资源 `abdata/chara/nikki/nikki120.unity3d`，未解包文件大小均为 `117,339,989` 字节，Unity revision 为 `2018.2.21f1`。第一个资源 SHA-256 为
+`f1144bf32fe4201f44bf982b796d9be23fdb8aa16e7d38aa668b63e915396276`，第二个为
+`69fb8642e416b0ff672e905339c506cf05d35194aead14129a79b4b6678e94e4`。
+
+第一个文件以 `NB`（`4e 42`）开头，不是 `UnityFS`；第二个直接以 `UnityFS\0` 开头。逐字节比较显示：前 `529` 字节全部不同，而从偏移 `529`（十六进制 `0x211`）到文件末尾的 `117,339,460` 字节完全相同。这个固定物理前缀覆盖 UnityFS 头、block-info 和第一个压缩节点流的开头；它没有改变解压后的 SerializedFile 或 `.resS` 资源内容。
+
+对照得到的前缀掩码为：
+
+```text
+mask[i] = encrypted[i] XOR plain[i]  (0 <= i < 529)
+```
+
+其中偏移 `18` 之后的 XOR 掩码按 32 字节循环，ASCII 表示为
+`71C8F4F7BF2315C2D6196FDCAD8339D1`；前 18 字节是该 NB 格式的特殊头部编码，不能只用这 32 字节掩码从零猜出。项目脚本 `apps/scripts/repack_nb_zipmods.py` 将其归类为 NB 固定 529 字节前缀保护。
+
+### 恢复和验证
+
+使用第二个文件作为同资源明文对照，仅对第一个文件的前 529 字节应用位置 XOR 掩码，恢复结果 SHA-256 为
+`69fb8642e416b0ff672e905339c506cf05d35194aead14129a79b4b6678e94e4`，与第二个 Unity3D 文件逐字节一致；原始文件未覆盖。
+最终恢复包保存在 `apps/tmp/nikki120_compare/recovered/nikki120.zipmod`。
+
+恢复后的 UnityFS 头和节点为：`format=6`、`2018.2.21f1`、声明大小 `117,339,989`，两个节点分别是 `CAB-fb6376a4614dfacc20712a19a4123c0d`（`4,719,940` 字节）和对应 `.resS`（`112,619,912` 字节）。UnityPy 读取通过，包含 `2,555` 个对象、`1,187` 个 `GameObject`、`27` 个 `Mesh`、`44` 个 `Texture2D`；44 张纹理均成功解码。项目 NB 重打包脚本也验证通过，并报告 Unity `2018.2.21f1`、`2` 个节点；恢复 zipmod 内所有成员 payload 与第二个 zipmod 相同。
+
+### 适用边界
+
+- 该结论依赖同 GUID、同资源路径且文件主体逐字节相同的明文对照，适用于本次 `nikki120` 样本和具备相同 NB 结构的文件。
+- 对未知 NB 文件，必须先确认 `NB` 头、固定 `529` 字节边界和未改写的后缀；不能仅凭文件名或作者名复制掩码。
+- 该恢复只去除已确认的外层前缀保护，不替代 UnityPy/AssetStudio 对象、纹理、引用和游戏内实例化验证。

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import StartView from "./components/views/StartView.vue";
 import CardCoverCropper from "./components/CardCoverCropper.vue";
 import ViewLoading from "./components/ViewLoading.vue";
@@ -58,6 +58,7 @@ const modLibraryScrollPositions = reactive({ mods: 0, items: 0 });
 const modTableScrollTarget = ref(null);
 let modTableScrollRestoreToken = 0;
 let modTableScrollRestoring = false;
+let modTableLocateInProgress = false;
 
 const cardLibraryScrollPositions = reactive({ character: 0, clothes: 0, scene: 0 });
 const cardLibraryScrollTargets = reactive({ character: null, clothes: null, scene: null });
@@ -594,6 +595,7 @@ const stats = reactive({
   sceneCards: null,
   plugins: null,
   duplicateZipmods: null,
+  zipmodTotalBytes: null,
   lastDatabaseBuiltAt: ""
 });
 
@@ -653,8 +655,11 @@ const selectedSceneDetailPath = ref("");
 const selectedSceneDetail = ref(null);
 const sceneDetailTab = ref("详情");
 const sceneSideMode = ref("tree");
+const exportingSceneCharacters = ref(false);
+const sceneCharacterExportNotice = reactive({ type: "", message: "", path: "" });
 const cardDependencyFilter = ref("all");
 const cardFavoriteFilter = ref(false);
+const cardGenderFilter = ref("all");
 const selectedCardFolder = ref("");
 const selectedCardDetailPath = ref("");
 const characterSideMode = ref("tree");
@@ -774,13 +779,8 @@ const cardTagFilter = reactive({
   error: "",
   search: "",
   available: [],
-  scope: "directory",
-  resultsLoading: false,
-  resultsError: "",
-  libraryTag: "",
-  libraryCards: []
+  scope: "directory"
 });
-let cardTagLibraryRequestId = 0;
 let clothesListRequestId = 0;
 let clothesIndexRetryTimer = 0;
 let clothesTreeRefreshTimer = 0;
@@ -852,12 +852,16 @@ const sceneLibrary = reactive({
   hasMore: false
 });
 
-// Keep each incremental response small. The compact item view virtualizes its
+// Keep each incremental response bounded. The compact item view virtualizes its
 // DOM window, so this controls request/JSON work rather than rendered nodes.
-const ITEM_PAGE_SIZE = 96;
+const ITEM_PAGE_SIZE = 256;
+const ITEM_LOCATE_CONTEXT_PAGES = 2;
 // The grid is image-first. LazyThumbnail still requests only rows near the
 // viewport; card payload parsing happens only when a user opens a detail view.
 const CHARACTER_CARD_PAGE_SIZE = 96;
+// The library listing is backed by the lightweight SQLite card index, so it
+// loads the complete lightweight row set in one request. Ordinary directory
+// browsing remains paged because it is not guaranteed to use that index.
 const CLOTHES_CARD_PAGE_SIZE = 96;
 const SCENE_CARD_PAGE_SIZE = 96;
 const MOD_PAGE_SIZE = 200;
@@ -1414,9 +1418,14 @@ const itemAuthorFilterOpen = ref(false);
 const selectedModItems = ref([]);
 const selectedModItemsLoading = ref(false);
 const selectedModItemsError = ref("");
+let selectedModItemsRequestSeq = 0;
+const selectedModUnity3dDependencies = ref([]);
+const selectedModUnity3dDependenciesLoading = ref(false);
+const selectedModUnity3dDependenciesError = ref("");
 const selectedModDiagnostics = ref(null);
 const selectedModDiagnosticsLoading = ref(false);
 const selectedModDiagnosticsError = ref("");
+const unity3dRepairResult = ref(null);
 const zipmodAuthors = ref([]);
 const itemFilterAuthors = ref([]);
 const itemFilterKinds = ref([]);
@@ -1437,6 +1446,7 @@ const itemFilters = reactive({
   status: "",
   source: ""
 });
+const itemNavigationZipmodId = ref(0);
 let itemFilterTimer = null;
 let modFilterTimer = null;
 let itemRowsRequestSeq = 0;
@@ -1564,6 +1574,10 @@ const organizeAllPrompt = reactive({ open: false, error: "" });
 const bulkUnity3dPrompt = reactive({
   open: false
 });
+const bulkRepackPrompt = reactive({
+  open: false,
+  error: ""
+});
 const bulkDuplicateCleanupPrompt = reactive({
   open: false,
   error: ""
@@ -1588,8 +1602,10 @@ const itemDatabase = reactive({
   exists: false,
   loading: false,
   loadingMore: false,
+  loadingPrevious: false,
   error: "",
   offset: 0,
+  pageOffset: 0,
   limit: ITEM_PAGE_SIZE,
   total: 0,
   hasMore: false
@@ -1638,20 +1654,18 @@ const cardTagPromptLibraryTags = computed(() => {
     .sort((left, right) => left.localeCompare(right, "zh-CN"));
 });
 const baseVisibleCards = computed(() => {
-  if (cardDependencyFilter.value === "missing") {
-    return cards.value.filter((card) => Number(card.missingCount || 0) > 0);
-  }
-  if (cardDependencyFilter.value === "normal") {
-    return cards.value.filter((card) => Number(card.missingCount || 0) === 0);
-  }
-  if (cardDependencyFilter.value.startsWith("tag:")) {
-    const targetTag = cardDependencyFilter.value.slice(4).toLocaleLowerCase();
-    const sourceCards = cardTagFilter.scope === "library" ? cardTagFilter.libraryCards : cards.value;
-    return sourceCards.filter((card) => (card.tags || []).some(
-      (tag) => String(tag).toLocaleLowerCase() === targetTag
-    ));
-  }
-  return cards.value;
+  const gender = cardGenderFilter.value;
+  const dependency = cardDependencyFilter.value;
+  return cards.value.filter((card) => {
+    if (gender !== "all" && String(card.relativePath || "").split(/[\\/]/, 1)[0].toLocaleLowerCase() !== gender) return false;
+    if (dependency === "missing") return Number(card.missingCount || 0) > 0;
+    if (dependency === "normal") return Number(card.missingCount || 0) === 0;
+    if (dependency.startsWith("tag:")) {
+      const targetTag = dependency.slice(4).toLocaleLowerCase();
+      return (card.tags || []).some((tag) => String(tag).toLocaleLowerCase() === targetTag);
+    }
+    return true;
+  });
 });
 const visibleCards = computed(() => {
   if (!cardFavoriteFilter.value) return baseVisibleCards.value;
@@ -1675,6 +1689,9 @@ const cardBrowserCountText = computed(() => {
       return `全库标签“${cardDependencyFilter.value.slice(4)}” ${visibleCards.value.length}`;
     }
     return `标签“${cardDependencyFilter.value.slice(4)}” ${visibleCards.value.length} / ${cards.value.length}`;
+  }
+  if (cardGenderFilter.value !== "all") {
+    return `${cardGenderFilter.value === "female" ? "女性" : "男性"} ${visibleCards.value.length}`;
   }
   return `已加载 ${loadedCountText}`;
 });
@@ -2250,6 +2267,10 @@ const cardFolderDisplay = computed(() => {
   return `UserData/chara${suffix}`;
 });
 
+const cardBrowserPathDisplay = computed(() => (
+  cardTagFilter.scope === "library" ? "UserData/chara · 全库" : cardFolderDisplay.value
+));
+
 function backendAssetUrl(path) {
   if (!path) return "";
   if (/^https?:\/\//i.test(path)) return path;
@@ -2269,6 +2290,7 @@ function mapCharacterCardRows(rows) {
     modifiedAt: card.modified_at ? new Date(card.modified_at * 1000).toLocaleDateString() : "",
     dependencyCount: card.dependency_count == null ? null : Number(card.dependency_count),
     missingCount: card.missing_count == null ? null : Number(card.missing_count),
+    missingModCount: card.missing_mod_count == null ? null : Number(card.missing_mod_count),
     favorite: Boolean(card.favorite),
     rating: Math.min(5, Math.max(0, Number(card.rating) || 0)),
     tags: Array.isArray(card.tags) ? card.tags.map((tag) => String(tag)) : []
@@ -2822,11 +2844,59 @@ async function loadSelectedSceneDetail(card = selectedSceneCard.value) {
   }
 }
 
+async function exportSelectedSceneCharacters() {
+  const card = selectedSceneCard.value;
+  if (!card?.relativePath || !paths.gameDir || exportingSceneCharacters.value || isBusy.value) return;
+  const targetDir = await window.desktopApi?.selectDirectory?.("选择人物卡导出目录");
+  if (!targetDir) return;
+
+  exportingSceneCharacters.value = true;
+  sceneCharacterExportNotice.type = "";
+  sceneCharacterExportNotice.message = "正在导出场景卡中的人物卡…";
+  sceneCharacterExportNotice.path = "";
+  try {
+    await submitTaskInBackground(
+      "export_scene_character_cards",
+      { path: card.relativePath, target_dir: targetDir },
+      async (task) => {
+        exportingSceneCharacters.value = false;
+        if (task.status !== "completed") {
+          sceneCharacterExportNotice.type = "error";
+          sceneCharacterExportNotice.message = task.error || "场景卡人物导出失败";
+          return;
+        }
+        const count = Number(task.data?.exported_count || 0);
+        sceneCharacterExportNotice.type = "success";
+        sceneCharacterExportNotice.message = `已导出 ${count} 张人物卡`;
+        sceneCharacterExportNotice.path = task.data?.target_dir || targetDir;
+        log(`[Cards] 已从场景卡导出 ${count} 张人物卡：${sceneCharacterExportNotice.path}`);
+      }
+    );
+  } catch (error) {
+    exportingSceneCharacters.value = false;
+    sceneCharacterExportNotice.type = "error";
+    sceneCharacterExportNotice.message = error.message;
+    log(`[Cards Error] ${error.message}`);
+  }
+}
+
+async function revealSceneCharacterExport() {
+  if (!sceneCharacterExportNotice.path) return;
+  const result = await window.desktopApi?.showItemInFolder?.(sceneCharacterExportNotice.path);
+  if (!result?.ok) {
+    sceneCharacterExportNotice.type = "error";
+    sceneCharacterExportNotice.message = result?.error || "无法打开导出位置";
+  }
+}
+
 async function handleSceneCardClick(card) {
   if (!card?.relativePath || sceneLibrary.detailLoading) return;
   sceneSideMode.value = "detail";
   selectedSceneDetailPath.value = card.relativePath;
   selectedSceneDetail.value = card;
+  sceneCharacterExportNotice.type = "";
+  sceneCharacterExportNotice.message = "";
+  sceneCharacterExportNotice.path = "";
   cardDependencyRemote.loading = false;
   cardDependencyRemote.error = "";
   cardDependencyRemote.byGuid = {};
@@ -2841,7 +2911,7 @@ async function refreshCharacterCardsAfterDatabaseBuild() {
 }
 
 function badgeClass(value) {
-  if (value === "警告") return "warn";
+  if (["警告", "未压缩unity3d"].includes(value)) return "warn";
   if (["ready", "正常", "Done", "目录有效"].includes(value)) return "ok";
   if (["thumb", "missing", "重复标识", "42%"].includes(value)) return "warn";
   if (["error", "parse", "错误", "读取失败", "检查失败", "Error"].includes(value)) return "danger";
@@ -2924,6 +2994,18 @@ function taskTimingRows(task) {
 }
 
 function taskResultRows(task) {
+  if (task?.task_type === "bulk_repack_zipmods_unity3d_lzma") {
+    const data = task.data || {};
+    return [
+      ["重压缩模组", data.repaired_count],
+      ["重压缩 Unity3D 文件", data.repacked_file_count],
+      ["跳过模组", data.skipped_count],
+      ["失败", data.failure_count],
+      ["压缩前总大小", data.total_size_before, "bytes"],
+      ["压缩后总大小", data.total_size_after, "bytes"],
+      ["总大小变化", data.total_size_delta, "byte-change"]
+    ].filter(([, value]) => value !== undefined && value !== null);
+  }
   if (task?.task_type === "import_external_zipmods") {
     const data = task.data || {};
     return [
@@ -2957,6 +3039,17 @@ function taskResultRows(task) {
     ["人物卡依赖", cardStats.dependencies],
     ["缺失依赖", cardStats.missing_dependencies]
   ].filter(([, value]) => value !== undefined && value !== null);
+}
+
+function formatTaskResultValue(row) {
+  const [, value, format] = row || [];
+  if (format === "bytes") return formatBytes(value);
+  if (format === "byte-change") {
+    const bytes = Number(value);
+    if (!Number.isFinite(bytes) || bytes === 0) return "0 B";
+    return `${bytes < 0 ? "减少" : "增加"} ${formatBytes(Math.abs(bytes))}`;
+  }
+  return formatStat(value);
 }
 
 function snapshotTask(task) {
@@ -3077,6 +3170,13 @@ function taskSummary(task) {
   if (task.task_type === "bulk_repair_zipmods_unity3d") {
     return `已修复 ${task.data?.repaired_count ?? 0} 个，跳过 ${task.data?.skipped_count ?? 0} 个`;
   }
+  if (task.task_type === "bulk_repack_zipmods_unity3d_lzma") {
+    const delta = Number(task.data?.total_size_delta);
+    const sizeSummary = Number.isFinite(delta)
+      ? `，总大小${delta < 0 ? "减少" : delta > 0 ? "增加" : "无变化"}${delta === 0 ? "" : ` ${formatBytes(Math.abs(delta))}`}`
+      : "";
+    return `已重压缩 ${task.data?.repaired_count ?? 0} 个，跳过 ${task.data?.skipped_count ?? 0} 个${sizeSummary}`;
+  }
   if (task.task_type === "bulk_cleanup_duplicate_zipmods") {
     return `已清理 ${task.data?.cleaned_duplicate_count ?? 0} 个重复文件，跳过 ${task.data?.skipped_count ?? 0} 个`;
   }
@@ -3174,6 +3274,11 @@ function formatBytes(value) {
   return `${size.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
 }
 
+function formatByteChange(value) {
+  const bytes = Math.abs(Number(value || 0));
+  return bytes === 0 ? "0 B" : formatBytes(bytes);
+}
+
 function formatDatabaseTime(value) {
   if (!value) return "-";
   const date = new Date(value);
@@ -3266,6 +3371,7 @@ function clearResourceStats() {
   stats.sceneCards = null;
   stats.plugins = null;
   stats.duplicateZipmods = null;
+  stats.zipmodTotalBytes = null;
   stats.lastDatabaseBuiltAt = "";
 }
 
@@ -3418,9 +3524,6 @@ async function loadCardTree() {
       log(`[Cards Tree Timing] ${JSON.stringify(result.timings)}`);
     }
     await selectCardFolder(selectedCardFolder.value);
-    if (cardTagFilter.scope === "library" && cardDependencyFilter.value.startsWith("tag:")) {
-      await loadLibraryCardsByTag(cardDependencyFilter.value.slice(4));
-    }
     log(
       `[Startup] loadCardTree completed in ${formatDurationMs(
         performance.now() - startedAt
@@ -3446,7 +3549,8 @@ async function loadCardTree() {
 async function selectCardFolder(relativePath = "") {
   resetCardLibraryScrollPosition("character");
   const requestId = ++cardListRequestId;
-  selectedCardFolder.value = relativePath || "";
+  const libraryScope = cardTagFilter.scope === "library";
+  selectedCardFolder.value = libraryScope ? "" : (relativePath || "");
   selectedCards.value = new Set();
   selectedCardDetailPath.value = "";
   selectedCardProfile.value = null;
@@ -3466,7 +3570,7 @@ async function selectCardFolder(relativePath = "") {
   // The root node normally contains only female/male directories. When it has
   // no direct cards, avoid a second request that would reload the full card
   // metadata index just to return an empty list.
-  if (!selectedCardFolder.value && cardTree.value && Number(cardTree.value.count || 0) === 0) {
+  if (!libraryScope && !selectedCardFolder.value && cardTree.value && Number(cardTree.value.count || 0) === 0) {
     log("[Cards List Timing] skipped root listing because the root has no direct cards");
     return;
   }
@@ -3475,8 +3579,11 @@ async function selectCardFolder(relativePath = "") {
   cardLibrary.error = "";
 
   try {
+    const pageQuery = libraryScope
+      ? "offset=0"
+      : `offset=0&limit=${CHARACTER_CARD_PAGE_SIZE}`;
     const result = await window.desktopApi?.backendRequest?.(
-      `/library/cards?game_dir=${encodeQuery(paths.gameDir)}&path=${encodeQuery(selectedCardFolder.value)}&offset=0&limit=${CHARACTER_CARD_PAGE_SIZE}`
+      `/library/cards?game_dir=${encodeQuery(paths.gameDir)}&path=${encodeQuery(selectedCardFolder.value)}&scope=${libraryScope ? "library" : "directory"}&${pageQuery}`
     );
     if (requestId !== cardListRequestId) return;
     if (!result?.ok) {
@@ -3521,7 +3628,8 @@ async function selectCardFolder(relativePath = "") {
 
 async function loadMoreCharacterCards() {
   if (
-    cardLibrary.loading
+    cardTagFilter.scope === "library"
+    || cardLibrary.loading
     || cardLibrary.loadingMore
     || !cardLibrary.hasMore
     || !backendReady.value
@@ -3531,10 +3639,11 @@ async function loadMoreCharacterCards() {
 
   const requestId = cardListRequestId;
   const offset = cardLibrary.nextOffset || cards.value.length;
+  const libraryScope = cardTagFilter.scope === "library";
   cardLibrary.loadingMore = true;
   try {
     const result = await window.desktopApi?.backendRequest?.(
-      `/library/cards?game_dir=${encodeQuery(paths.gameDir)}&path=${encodeQuery(selectedCardFolder.value)}&offset=${offset}&limit=${CHARACTER_CARD_PAGE_SIZE}`
+      `/library/cards?game_dir=${encodeQuery(paths.gameDir)}&path=${encodeQuery(selectedCardFolder.value)}&scope=${libraryScope ? "library" : "directory"}&tag=${encodeQuery(libraryScope && cardDependencyFilter.value.startsWith("tag:") ? cardDependencyFilter.value.slice(4) : "")}&offset=${offset}&limit=${CHARACTER_CARD_PAGE_SIZE}`
     );
     if (requestId !== cardListRequestId) return;
     if (!result?.ok) throw new Error(result?.error || "更多人物卡读取失败");
@@ -3602,6 +3711,11 @@ async function refreshCurrentCardFolder() {
   cardLibrary.error = "";
 
   try {
+    if (cardTagFilter.scope === "library") {
+      await loadCardTree();
+      log("[Cards] 已刷新人物卡库递归列表");
+      return;
+    }
     const changes = await window.desktopApi?.backendRequest?.(
       `/library/cards/changes?game_dir=${encodeQuery(paths.gameDir)}&path=${encodeQuery(currentFolder)}`
     );
@@ -3625,9 +3739,6 @@ async function refreshCurrentCardFolder() {
       await loadCardTree();
     } else {
       await selectCardFolder(currentFolder);
-      if (cardTagFilter.scope === "library" && cardDependencyFilter.value.startsWith("tag:")) {
-        await loadLibraryCardsByTag(cardDependencyFilter.value.slice(4));
-      }
       log(`[Cards] 当前目录未检测到人物卡变动，已重新读取列表`);
     }
   } catch (error) {
@@ -3639,13 +3750,16 @@ async function refreshCurrentCardFolder() {
 }
 
 function setLibraryMode(mode) {
+  const previousMode = libraryMode.value;
   libraryMode.value = mode;
   if (mode === "items") {
+    if (previousMode !== "items") itemNavigationZipmodId.value = 0;
     exitModBulkMode();
     itemTab.value = "详情";
     ensureItemDatabaseLoaded();
     return;
   }
+  itemNavigationZipmodId.value = 0;
   modTab.value = "详情";
   ensureModDatabaseLoaded();
 }
@@ -3780,6 +3894,12 @@ function normalizeZipmodStatus(row) {
   const thumbnailIssueCount = Number(row?.thumbnail_issue_count || 0);
   const author = String(row?.author || "").trim();
   const missingAuthor = !author || author === UNKNOWN_AUTHOR_LABEL;
+  const itemCount = Number(row?.item_count || 0);
+  const fileSize = Number(row?.file_size || 0);
+  const hasLargeUncompressedAverage =
+    Number(row?.unity3d_uncompressed_count || 0) > 0 &&
+    itemCount > 0 &&
+    fileSize / itemCount > 10 * 1024 * 1024;
   if (
     ["missing_manifest", "invalid_manifest", "read_error"].includes(status) ||
     unity3dStatus === "missing" ||
@@ -3792,6 +3912,7 @@ function normalizeZipmodStatus(row) {
     Number(row?.unity3d_not_in_mod_count || 0) > 0 ||
     Number(row?.unity3d_in_game_count || 0) > 0 ||
     Number(row?.unity3d_other_mod_count || 0) > 0 ||
+    hasLargeUncompressedAverage ||
     duplicateZipmodCount > 0 ||
     thumbnailIssueCount > 0
   ) return "警告";
@@ -3800,6 +3921,28 @@ function normalizeZipmodStatus(row) {
   if (status === "stale") return "已失效";
   if (["invalid", "invalid_manifest"].includes(status)) return "错误";
   return status || "未知";
+}
+
+function unity3dCompressionLabel(value) {
+  const labels = {
+    none: "无压缩",
+    lzma: "LZMA",
+    lz4: "LZ4",
+    other: "其它压缩",
+    unknown: "未知",
+  };
+  const key = String(value || "").trim();
+  return labels[key] || (key ? key : "无 Unity3D");
+}
+
+function unity3dDependencyReadStatusLabel(value) {
+  const labels = {
+    readable: "可读",
+    unreadable: "不可读",
+    missing: "缺失",
+  };
+  const key = String(value || "").trim();
+  return labels[key] || "未知";
 }
 
 function mapZipmodRow(row) {
@@ -3848,10 +3991,15 @@ async function applyModFilters() {
 
 async function applyItemFilters() {
   if (libraryMode.value !== "items") return;
+  // Manual filtering leaves the one-mod navigation context. Subsequent
+  // searches should use the normal item-browser scope.
+  itemNavigationZipmodId.value = 0;
   itemRows.value = [];
   selectedItem.value = null;
   itemDatabase.offset = 0;
+  itemDatabase.pageOffset = 0;
   itemDatabase.hasMore = false;
+  itemDatabase.loadingPrevious = false;
   const exists = await checkModDatabase();
   if (exists) await loadItemRows({ reset: true });
 }
@@ -3870,6 +4018,14 @@ function scheduleItemSearch() {
   itemFilterTimer = window.setTimeout(() => {
     applyItemFilters();
   }, 220);
+}
+
+function clearItemSearch() {
+  window.clearTimeout(itemFilterTimer);
+  itemFilterTimer = null;
+  if (!String(itemFilters.search || "")) return;
+  itemFilters.search = "";
+  void applyItemFilters();
 }
 
 function scheduleModAuthorFilter() {
@@ -3897,6 +4053,34 @@ function selectItemAuthorFilter(author) {
   applyItemFilters();
 }
 
+function resetItemBrowserNavigationFilters(search = "", zipmodId = 0) {
+  // A navigation from a mod/card dependency starts a new item-browser
+  // context. Cancel a queued search from the previous context before writing
+  // the new values, otherwise that callback can reload rows with stale state
+  // while the destination view is opening.
+  window.clearTimeout(itemFilterTimer);
+  itemFilterTimer = null;
+  itemRowsRequestSeq += 1;
+  itemNavigationZipmodId.value = Number(zipmodId) > 0 ? Number(zipmodId) : 0;
+  itemAuthorFilterOpen.value = false;
+  itemFilters.search = String(search || "");
+  itemFilters.kind = "";
+  itemFilters.author = "";
+  itemFilters.status = "";
+  itemFilters.source = "mod";
+  dependencyUsageFilter.value = "";
+  itemRows.value = [];
+  selectedItem.value = null;
+  itemDatabase.offset = 0;
+  itemDatabase.pageOffset = 0;
+  itemDatabase.total = 0;
+  itemDatabase.hasMore = false;
+  itemDatabase.loading = false;
+  itemDatabase.loadingMore = false;
+  itemDatabase.loadingPrevious = false;
+  itemDatabase.error = "";
+}
+
 function closeItemAuthorFilterSoon() {
   window.setTimeout(() => {
     itemAuthorFilterOpen.value = false;
@@ -3910,6 +4094,291 @@ function selectItem(row) {
     itemGameNotice.type = "";
     itemGameNotice.message = "";
   }
+}
+
+function itemRowMatchesCurrentGameItem(row, item, lookup) {
+  if (!row || !item || !lookup) return false;
+  const raw = row.raw || {};
+  const sameNumber = (left, right) => {
+    const leftText = String(left ?? "").trim();
+    const rightText = String(right ?? "").trim();
+    if (leftText === rightText) return true;
+    return /^\d+$/.test(leftText) && /^\d+$/.test(rightText)
+      && Number(leftText) === Number(rightText);
+  };
+  if (!sameNumber(row.kindCode || raw.kind, lookup.categoryNo)) return false;
+  if (lookup.source === "builtin") {
+    return row.isBuiltin
+      && sameNumber(raw.item_id, lookup.localSlot);
+  }
+  return !row.isBuiltin
+    && String(raw.zipmod_guid || "").trim().toLocaleLowerCase() === lookup.guid
+    && sameNumber(raw.item_id, lookup.slot);
+}
+
+function buildItemRowsQuery({ offset = 0, limit = itemDatabase.limit, includeTotal = false, lookup = null } = {}) {
+  const query = new URLSearchParams({
+    offset: String(offset),
+    limit: String(limit),
+    include_total: includeTotal ? "1" : "0"
+  });
+  if (itemFilters.search.trim()) query.set("search", itemFilters.search.trim());
+  if (itemNavigationZipmodId.value > 0) {
+    query.set("zipmod_id", String(itemNavigationZipmodId.value));
+  }
+  if (itemFilters.kind) query.set("kind", itemFilters.kind);
+  if (itemFilters.author) query.set("author", itemFilters.author);
+  if (itemFilters.status) query.set("status", itemFilters.status);
+  if (dependencyUsageFilter.value) query.set("usage", dependencyUsageFilter.value);
+  query.set("source", itemFilters.source || "all");
+  if (paths.gameDir) query.set("game_dir", paths.gameDir);
+  if (lookup?.source === "mod") {
+    query.set("locate_source", "mod");
+    query.set("locate_guid", lookup.guid);
+    query.set("locate_slot", lookup.slot);
+  } else if (lookup?.source === "builtin") {
+    query.set("locate_source", "builtin");
+    query.set("locate_local_slot", lookup.localSlot);
+  }
+  return query;
+}
+
+function waitForAnimationFrame() {
+  return new Promise((resolve) => window.requestAnimationFrame(resolve));
+}
+
+function locatedItemDomKey(row) {
+  return `${row?.sourceType || "mod"}:${row?.id}`;
+}
+
+function findLocatedItemNode(scrollTarget, row) {
+  const key = locatedItemDomKey(row);
+  return Array.from(scrollTarget.querySelectorAll("[data-item-key]"))
+    .find((node) => node.dataset.itemKey === key) || null;
+}
+
+async function waitForLocatedItemNode(scrollTarget, row, frameCount = 6) {
+  for (let index = 0; index < frameCount; index += 1) {
+    await nextTick();
+    await waitForAnimationFrame();
+    const node = findLocatedItemNode(scrollTarget, row);
+    if (node) return node;
+  }
+  return findLocatedItemNode(scrollTarget, row);
+}
+
+function estimateLocatedItemScrollTop(scrollTarget, index) {
+  if (itemViewMode.value === "table") {
+    const rowHeight = 60;
+    const targetTop = index * rowHeight;
+    return targetTop - Math.max(0, (scrollTarget.clientHeight - rowHeight) / 2);
+  }
+  const contentWidth = Math.max(0, scrollTarget.clientWidth - 12);
+  const columns = Math.max(1, Math.floor((contentWidth + 2) / 106));
+  const cardWidth = Math.max(104, (contentWidth - (columns - 1) * 2) / columns);
+  const rowHeight = Math.ceil(cardWidth + 20) + 2;
+  const targetTop = 12 + Math.floor(index / columns) * rowHeight;
+  return targetTop - Math.max(0, (scrollTarget.clientHeight - rowHeight) / 2);
+}
+
+function centerLocatedItemNode(scrollTarget, node) {
+  const containerRect = scrollTarget.getBoundingClientRect();
+  const nodeRect = node.getBoundingClientRect();
+  const desiredTop = scrollTarget.scrollTop
+    + (nodeRect.top - containerRect.top)
+    - Math.max(0, (scrollTarget.clientHeight - nodeRect.height) / 2);
+  const maxScrollTop = Math.max(0, scrollTarget.scrollHeight - scrollTarget.clientHeight);
+  const nextScrollTop = Math.max(0, Math.min(maxScrollTop, desiredTop));
+  if (Math.abs(nextScrollTop - scrollTarget.scrollTop) > 1) {
+    scrollTarget.scrollTop = nextScrollTop;
+  }
+}
+
+async function scrollToLocatedItem(row) {
+  const scrollTarget = modTableScrollTarget.value;
+  if (!scrollTarget || !row) return;
+  const index = itemRows.value.findIndex((candidate) => (
+    String(candidate.sourceType || "mod") === String(row.sourceType || "mod")
+    && String(candidate.id) === String(row.id)
+  ));
+  if (index < 0) return;
+
+  // A list replacement schedules delayed session-position restores. Cancel
+  // those restores while this explicit locate operation is in progress.
+  modTableScrollRestoreToken += 1;
+  modTableLocateInProgress = true;
+  try {
+    let selectedNode = findLocatedItemNode(scrollTarget, row);
+    if (!selectedNode) {
+      const estimatedTop = estimateLocatedItemScrollTop(scrollTarget, index);
+      const maxScrollTop = Math.max(0, scrollTarget.scrollHeight - scrollTarget.clientHeight);
+      scrollTarget.scrollTop = Math.max(0, Math.min(maxScrollTop, estimatedTop));
+      selectedNode = await waitForLocatedItemNode(scrollTarget, row);
+    }
+    if (!selectedNode) return;
+
+    // Virtual rows can move once their viewport metrics are updated. Center the
+    // actual DOM node, then perform one more correction after that reflow.
+    centerLocatedItemNode(scrollTarget, selectedNode);
+    selectedNode = await waitForLocatedItemNode(scrollTarget, row, 2) || selectedNode;
+    centerLocatedItemNode(scrollTarget, selectedNode);
+  } finally {
+    modTableLocateInProgress = false;
+    captureModTableScrollPosition("items", scrollTarget);
+  }
+}
+
+async function ensureLocatedItemContext(target) {
+  if (!target || itemRows.value.length === 0) return target;
+  const targetIndex = itemRows.value.findIndex((candidate) => (
+    String(candidate.sourceType || "mod") === String(target.sourceType || "mod")
+    && String(candidate.id) === String(target.id)
+  ));
+  if (targetIndex < 0) return target;
+
+  const pageSize = Math.max(1, Number(itemDatabase.limit) || ITEM_PAGE_SIZE);
+  const absoluteIndex = Number(itemDatabase.pageOffset || 0) + targetIndex;
+  const targetPageOffset = Math.floor(absoluteIndex / pageSize) * pageSize;
+  const contextStart = Math.max(0, targetPageOffset - ITEM_LOCATE_CONTEXT_PAGES * pageSize);
+  while (Number(itemDatabase.pageOffset || 0) > contextStart) {
+    const previousOffset = Number(itemDatabase.pageOffset || 0);
+    await loadItemRows({ direction: "previous" });
+    if (Number(itemDatabase.pageOffset || 0) >= previousOffset) break;
+  }
+  const contextEnd = targetPageOffset + (ITEM_LOCATE_CONTEXT_PAGES + 1) * pageSize;
+  while (itemDatabase.hasMore && Number(itemDatabase.offset || 0) < contextEnd) {
+    const nextOffset = Number(itemDatabase.offset || 0);
+    await loadItemRows();
+    if (Number(itemDatabase.offset || 0) <= nextOffset) break;
+  }
+  return itemRows.value.find((candidate) => (
+    String(candidate.sourceType || "mod") === String(target.sourceType || "mod")
+    && String(candidate.id) === String(target.id)
+  )) || target;
+}
+
+async function locateAssemblyCurrentItem(item) {
+  if (!item || libraryMode.value !== "items") return false;
+  const categoryNo = Number(item.categoryNo);
+  if (!Number.isSafeInteger(categoryNo) || Number(item.localSlot || 0) === 0) return false;
+  const resolverRecords = Array.isArray(item.resolverRecords) ? item.resolverRecords : [];
+  const resolver = resolverRecords.find((record) => (
+    String(record?.guid || "").trim()
+    && record?.slot != null
+    && Number(record?.localSlot) === Number(item.localSlot)
+  )) || resolverRecords.find((record) => (
+    String(record?.guid || "").trim() && record?.slot != null
+  ));
+  const lookup = resolver
+    ? {
+        source: "mod",
+        categoryNo,
+        guid: String(resolver.guid).trim().toLocaleLowerCase(),
+        slot: String(resolver.slot)
+      }
+    : {
+        source: "builtin",
+        categoryNo,
+        localSlot: String(item.localSlot)
+      };
+
+  let target = itemRows.value.find((row) => itemRowMatchesCurrentGameItem(row, item, lookup));
+  if (!target) {
+    // The current page may not contain the equipped item. Ask the backend for
+    // its exact page while preserving every visible filter value. The target
+    // page is loaded together with nearby context pages; filters are not reset
+    // or rewritten.
+    if (itemDatabase.loading || itemDatabase.loadingMore || !itemDatabase.exists) return false;
+    const query = buildItemRowsQuery({ includeTotal: true, lookup });
+    const requestSeq = ++itemRowsRequestSeq;
+    itemDatabase.loadingMore = true;
+    itemDatabase.error = "";
+    try {
+      const result = await window.desktopApi?.backendRequest?.(`/mods/items?${query.toString()}`);
+      if (requestSeq !== itemRowsRequestSeq) return false;
+      if (!result?.ok) throw new Error(result?.error || "物品定位查询失败");
+      const data = result.data || {};
+      if (!data.locate?.found) {
+        itemGameNotice.type = "error";
+        itemGameNotice.message = "当前筛选结果中未找到当前栏位对应的物品。";
+        itemGameApply.error = itemGameNotice.message;
+        return false;
+      }
+      const locatedRows = (data.rows || []).map(mapModItemRow);
+      const targetOffset = Number(data.offset || 0);
+      const contextOffsets = [];
+      for (let page = 1; page <= ITEM_LOCATE_CONTEXT_PAGES; page += 1) {
+        const contextOffset = targetOffset - page * itemDatabase.limit;
+        if (contextOffset >= 0) contextOffsets.push(contextOffset);
+      }
+      const total = Number(data.total || 0);
+      for (let page = 1; page <= ITEM_LOCATE_CONTEXT_PAGES; page += 1) {
+        const contextOffset = targetOffset + locatedRows.length + (page - 1) * itemDatabase.limit;
+        if (data.has_more && (!total || contextOffset < total)) contextOffsets.push(contextOffset);
+      }
+      const contextResults = await Promise.allSettled(
+        contextOffsets.map(async (contextOffset) => {
+          const contextResponse = await window.desktopApi?.backendRequest?.(
+            `/mods/items?${buildItemRowsQuery({ offset: contextOffset })}`
+          );
+          if (!contextResponse?.ok) {
+            throw new Error(contextResponse?.error || "定位上下文页读取失败");
+          }
+          return {
+            offset: contextOffset,
+            data: contextResponse.data || {}
+          };
+        })
+      );
+      if (requestSeq !== itemRowsRequestSeq) return false;
+      const successfulContextPages = contextResults
+        .filter((result) => result.status === "fulfilled")
+        .map((result) => result.value)
+        .sort((left, right) => left.offset - right.offset);
+      for (const failedResult of contextResults.filter((result) => result.status === "rejected")) {
+        log(`[Items] 定位上下文页读取失败：${failedResult.reason?.message || failedResult.reason}`);
+      }
+      const previousContextPages = successfulContextPages.filter((page) => page.offset < targetOffset);
+      const nextContextPages = successfulContextPages.filter((page) => page.offset > targetOffset);
+      const contextRows = [
+        ...previousContextPages.flatMap((page) => (page.data?.rows || []).map(mapModItemRow)),
+        ...locatedRows,
+        ...nextContextPages.flatMap((page) => (page.data?.rows || []).map(mapModItemRow))
+      ];
+      const contextOffset = previousContextPages[0]?.offset ?? targetOffset;
+      itemRows.value = contextRows;
+      itemDatabase.checked = true;
+      itemDatabase.exists = Boolean(data.exists);
+      itemDatabase.total = total;
+      itemDatabase.pageOffset = contextOffset;
+      itemDatabase.offset = contextOffset + contextRows.length;
+      itemDatabase.hasMore = nextContextPages.length > 0
+        ? Boolean(nextContextPages[nextContextPages.length - 1].data?.has_more)
+        : Boolean(data.has_more);
+      target = contextRows.find((row) => itemRowMatchesCurrentGameItem(row, item, lookup));
+    } catch (error) {
+      if (requestSeq !== itemRowsRequestSeq) return false;
+      itemDatabase.error = error.message;
+      itemGameNotice.type = "error";
+      itemGameNotice.message = error.message;
+      itemGameApply.error = error.message;
+      return false;
+    } finally {
+      if (requestSeq === itemRowsRequestSeq) itemDatabase.loadingMore = false;
+    }
+  }
+  if (!target) {
+    itemGameNotice.type = "error";
+    itemGameNotice.message = "当前筛选结果中未找到当前栏位对应的物品。";
+    itemGameApply.error = itemGameNotice.message;
+    return false;
+  }
+  target = await ensureLocatedItemContext(target);
+  selectItem(target);
+  await scrollToLocatedItem(target);
+  itemGameNotice.type = "success";
+  itemGameNotice.message = `已定位「${target.name}」。`;
+  return true;
 }
 
 function itemGameApplySpec(item) {
@@ -4519,6 +4988,172 @@ async function applyAssemblyItem(item) {
   return applyItemToGame(item);
 }
 
+async function clearAssemblyClothingSlot(item) {
+  if (!assemblyMode.value || !item || itemGameApply.busy) return false;
+  const localSlot = Number(item.localSlot || 0);
+  const categoryNo = Number(item.categoryNo);
+  if (localSlot === 0) return false;
+  if (!GAME_CLOTHING_CATEGORY_NOS.has(String(categoryNo))) {
+    itemGameNotice.type = "error";
+    itemGameNotice.message = "当前栏位不是可清除的服装栏位。";
+    itemGameApply.error = itemGameNotice.message;
+    return false;
+  }
+
+  const request = window.desktopApi?.backendRequest;
+  if (typeof request !== "function") {
+    itemGameNotice.type = "error";
+    itemGameNotice.message = "资源通信接口尚未加载，请重启应用后再试。";
+    itemGameApply.error = itemGameNotice.message;
+    return false;
+  }
+
+  const body = {
+    type: "clothes",
+    categoryNo,
+    localSlot: 0
+  };
+  if (assemblyCharacterTarget.target === "hscene") {
+    body.target = "hscene";
+    body.sex = assemblyCharacterTarget.sex;
+    body.characterIndex = assemblyCharacterTarget.characterIndex;
+    body.targetCharacterId = assemblyCharacterTarget.characterId;
+  }
+
+  itemGameApply.busy = true;
+  itemGameApply.itemId = null;
+  itemGameApply.commandId = "";
+  itemGameApply.status = "submitting";
+  itemGameApply.error = "";
+  itemGameNotice.type = "info";
+  itemGameNotice.message = `正在清除${gameCurrentSlotLabel(item)}…`;
+  try {
+    const submitted = await request("/game-item-probe/apply", {
+      method: "POST",
+      body
+    });
+    if (!submitted?.ok) throw new Error(formatGameItemProbeError(submitted));
+    const accepted = submitted.data || {};
+    const commandId = String(accepted.commandId || "").trim();
+    if (!accepted.accepted || !commandId) {
+      throw new Error(formatGameItemProbeError(accepted));
+    }
+    itemGameApply.commandId = commandId;
+    itemGameApply.status = String(accepted.status || "queued");
+    const maxWaitMs = CARD_LOAD_EDITOR_MAX_WAIT_MS;
+    const deadline = Date.now() + maxWaitMs;
+    let firstPoll = true;
+    while (Date.now() < deadline) {
+      await sleep(firstPoll ? 80 : CARD_LOAD_POLL_INTERVAL_MS);
+      firstPoll = false;
+      const polled = await request(`/game-item-probe/command?id=${encodeURIComponent(commandId)}`);
+      if (!polled?.ok) throw new Error(formatGameItemProbeError(polled));
+      const command = polled.data || {};
+      itemGameApply.status = String(command.status || "");
+      if (command.status === "succeeded") {
+        itemGameNotice.type = "success";
+        itemGameNotice.message = `已清除${gameCurrentSlotLabel(item)}。游戏资源加载可能还需要片刻。`;
+        if (assemblyMode.value) void refreshCurrentGameState({ silent: true });
+        log(`[Game] 已请求清除服装栏位：${gameCurrentSlotLabel(item)}（categoryNo=${categoryNo}）`);
+        return true;
+      }
+      if (["failed", "expired"].includes(command.status)) {
+        throw new Error(formatGameItemProbeError(command));
+      }
+    }
+    const timeoutSeconds = Math.round(maxWaitMs / 1000);
+    throw new Error(`清除服装栏位命令超过 ${timeoutSeconds} 秒未完成，请确认目标角色仍处于可操作状态。`);
+  } catch (error) {
+    itemGameApply.error = error instanceof Error ? error.message : String(error);
+    itemGameNotice.type = "error";
+    itemGameNotice.message = itemGameApply.error;
+    log(`[Game Error] ${itemGameApply.error}`);
+    return false;
+  } finally {
+    itemGameApply.busy = false;
+    itemGameApply.itemId = null;
+  }
+}
+
+async function clearAssemblyAccessorySlot(item) {
+  if (!assemblyMode.value || !item || itemGameApply.busy) return false;
+  const slotNo = accessorySlotNoFromItem(item);
+  if (slotNo == null || Number(item.localSlot || 0) === 0) return false;
+
+  const request = window.desktopApi?.backendRequest;
+  if (typeof request !== "function") {
+    itemGameNotice.type = "error";
+    itemGameNotice.message = "资源通信接口尚未加载，请重启应用后再试。";
+    itemGameApply.error = itemGameNotice.message;
+    return false;
+  }
+
+  const body = {
+    type: "accessory",
+    categoryNo: GAME_ACCESSORY_NONE_CATEGORY_NO,
+    localSlot: 0,
+    slotNo
+  };
+  if (assemblyCharacterTarget.target === "hscene") {
+    body.target = "hscene";
+    body.sex = assemblyCharacterTarget.sex;
+    body.characterIndex = assemblyCharacterTarget.characterIndex;
+    body.targetCharacterId = assemblyCharacterTarget.characterId;
+  }
+
+  itemGameApply.busy = true;
+  itemGameApply.itemId = null;
+  itemGameApply.commandId = "";
+  itemGameApply.status = "submitting";
+  itemGameApply.error = "";
+  itemGameNotice.type = "info";
+  itemGameNotice.message = `正在移除配饰槽 ${slotNo + 1}…`;
+  try {
+    const submitted = await request("/game-item-probe/apply", {
+      method: "POST",
+      body
+    });
+    if (!submitted?.ok) throw new Error(formatGameItemProbeError(submitted));
+    const accepted = submitted.data || {};
+    const commandId = String(accepted.commandId || "").trim();
+    if (!accepted.accepted || !commandId) throw new Error(formatGameItemProbeError(accepted));
+    itemGameApply.commandId = commandId;
+    itemGameApply.status = String(accepted.status || "queued");
+    const maxWaitMs = CARD_LOAD_EDITOR_MAX_WAIT_MS;
+    const deadline = Date.now() + maxWaitMs;
+    let firstPoll = true;
+    while (Date.now() < deadline) {
+      await sleep(firstPoll ? 80 : CARD_LOAD_POLL_INTERVAL_MS);
+      firstPoll = false;
+      const polled = await request(`/game-item-probe/command?id=${encodeURIComponent(commandId)}`);
+      if (!polled?.ok) throw new Error(formatGameItemProbeError(polled));
+      const command = polled.data || {};
+      itemGameApply.status = String(command.status || "");
+      if (command.status === "succeeded") {
+        itemGameNotice.type = "success";
+        itemGameNotice.message = `已移除配饰槽 ${slotNo + 1}。游戏资源加载可能还需要片刻。`;
+        assemblyAccessorySlotTypes[slotNo] = GAME_ACCESSORY_NONE_CATEGORY_NO;
+        if (assemblyMode.value) void refreshCurrentGameState({ silent: true });
+        log(`[Game] 已请求移除配饰：slotNo=${slotNo}`);
+        return true;
+      }
+      if (["failed", "expired"].includes(command.status)) {
+        throw new Error(formatGameItemProbeError(command));
+      }
+    }
+    throw new Error(`移除配饰命令超过 ${Math.round(maxWaitMs / 1000)} 秒未完成，请确认目标角色仍处于可操作状态。`);
+  } catch (error) {
+    itemGameApply.error = error instanceof Error ? error.message : String(error);
+    itemGameNotice.type = "error";
+    itemGameNotice.message = itemGameApply.error;
+    log(`[Game Error] ${itemGameApply.error}`);
+    return false;
+  } finally {
+    itemGameApply.busy = false;
+    itemGameApply.itemId = null;
+  }
+}
+
 function formatGameItemProbeError(payload) {
   const code = String(payload?.error_code || payload?.errorCode || payload?.data?.errorCode || payload?.data?.error_code || "");
   const details = String(payload?.error || payload?.data?.error || "").trim();
@@ -5076,12 +5711,19 @@ function consumeWorkbenchTemplateSelection() {
 
 function selectMod(row) {
   selectedMod.value = row;
+  selectedModItemsRequestSeq += 1;
   selectedModItems.value = [];
+  selectedModItemsLoading.value = false;
   selectedModItemsError.value = "";
+  selectedModUnity3dDependencies.value = [];
+  selectedModUnity3dDependenciesLoading.value = false;
+  selectedModUnity3dDependenciesError.value = "";
   selectedModDiagnostics.value = null;
   selectedModDiagnosticsError.value = "";
+  unity3dRepairResult.value = null;
   if (modTab.value === "物品") {
     loadSelectedModItems();
+    loadSelectedModUnity3dDependencies();
   } else if (modTab.value === "诊断") {
     loadSelectedModDiagnostics();
   }
@@ -5136,14 +5778,10 @@ async function openModItemInItemBrowser(item) {
   const guid = selectedMod.value.guid || item.raw?.zipmod_guid || "";
   if (!guid) return;
 
+  activeView.value = "mods";
   libraryMode.value = "items";
   itemTab.value = "详情";
-  itemFilters.search = guid;
-  itemFilters.kind = "";
-  itemFilters.author = "";
-  itemFilters.status = "";
-  itemFilters.source = "mod";
-  dependencyUsageFilter.value = "";
+  resetItemBrowserNavigationFilters(guid, selectedMod.value.id);
 
   await ensureItemDatabaseLoaded({ force: true });
 
@@ -5188,12 +5826,10 @@ async function openCardDependencyItem(dependency) {
   activeView.value = "mods";
   libraryMode.value = "items";
   itemTab.value = "详情";
-  itemFilters.search = dependency.item.zipmod_guid || dependency.mod_id || "";
-  itemFilters.kind = "";
-  itemFilters.author = "";
-  itemFilters.status = "";
-  itemFilters.source = "mod";
-  dependencyUsageFilter.value = "";
+  resetItemBrowserNavigationFilters(
+    dependency.item.zipmod_guid || dependency.mod_id || "",
+    dependency.item.zipmod_id || dependency.zipmod?.id || 0
+  );
 
   await ensureItemDatabaseLoaded({ force: true });
 
@@ -5333,21 +5969,53 @@ async function locateSourceMod(row = selectedItem.value) {
 async function loadSelectedModItems() {
   if (!selectedMod.value || selectedModItemsLoading.value) return;
   selectedModItemsLoading.value = true;
+  const requestSeq = ++selectedModItemsRequestSeq;
+  const zipmodId = selectedMod.value.id;
   selectedModItemsError.value = "";
   try {
     const result = await window.desktopApi?.backendRequest?.(
-      `/mods/items?zipmod_id=${selectedMod.value.id}&offset=0&limit=1000`
+      `/mods/items?zipmod_id=${zipmodId}&offset=0&limit=1000`
     );
+    if (requestSeq !== selectedModItemsRequestSeq || selectedMod.value?.id !== zipmodId) return;
     if (!result?.ok) {
       throw new Error(result?.error || "关联物品读取失败");
     }
     selectedModItems.value = (result.data?.rows || []).map(mapModItemRow);
   } catch (error) {
+    if (requestSeq !== selectedModItemsRequestSeq || selectedMod.value?.id !== zipmodId) return;
     selectedModItemsError.value = error.message;
     selectedModItems.value = [];
     log(`[Mods Error] ${error.message}`);
   } finally {
-    selectedModItemsLoading.value = false;
+    if (requestSeq === selectedModItemsRequestSeq) selectedModItemsLoading.value = false;
+  }
+}
+
+async function loadSelectedModUnity3dDependencies() {
+  if (!selectedMod.value || selectedModUnity3dDependenciesLoading.value) return;
+  const zipmodId = selectedMod.value.id;
+  selectedModUnity3dDependenciesLoading.value = true;
+  selectedModUnity3dDependenciesError.value = "";
+  try {
+    const result = await window.desktopApi?.backendRequest?.(
+      `/mods/zipmods/${zipmodId}/unity3d-dependencies`
+    );
+    if (!result?.ok) {
+      throw new Error(result?.error || "Unity3D 依赖读取失败");
+    }
+    if (selectedMod.value?.id !== zipmodId) return;
+    selectedModUnity3dDependencies.value = Array.isArray(result.dependencies)
+      ? result.dependencies
+      : [];
+  } catch (error) {
+    if (selectedMod.value?.id !== zipmodId) return;
+    selectedModUnity3dDependenciesError.value = error.message;
+    selectedModUnity3dDependencies.value = [];
+    log(`[Mods Error] ${error.message}`);
+  } finally {
+    if (selectedMod.value?.id === zipmodId) {
+      selectedModUnity3dDependenciesLoading.value = false;
+    }
   }
 }
 
@@ -5358,6 +6026,7 @@ function setModTab(tab) {
   }
   if (tab === "物品") {
     loadSelectedModItems();
+    loadSelectedModUnity3dDependencies();
   }
 }
 
@@ -5391,6 +6060,7 @@ function unity3dIssueTitle(issue) {
   if (issue.type === "manifest_author") return "缺少模组作者";
   if (issue.type === "thumbnail") return "缩略图异常";
   if (issue.type === "duplicate_zipmod") return "存在重复模组";
+  if (issue.type === "unity3d_compression") return "未压缩unity3d";
   if (issue.status === "error") return "Unity3D 文件资源读取异常";
   if (["in_game", "not_in_mod"].includes(issue.status)) return "Unity3D 文件不在当前 zipmod 内";
   if (issue.status === "missing") return "Unity3D \u6587\u4ef6\u65e0\u6cd5\u627e\u5230";
@@ -5402,6 +6072,7 @@ function unity3dIssueSummary(issue) {
   if (issue.type === "manifest_author") return "manifest.xml 缺少 author 字段。";
   if (issue.type === "thumbnail") return "部分物品缩略图缺失或读取失败。";
   if (issue.type === "duplicate_zipmod") return "同一 GUID 存在多个 zipmod 文件。";
+  if (issue.type === "unity3d_compression") return "模组依赖的 Unity3D 使用未压缩格式。";
   if (issue.status === "error") return "Unity3D 文件存在，但没有解析出可用 Unity 资源。";
   if (["in_game", "not_in_mod"].includes(issue.status)) {
     if (issue.source === "other_zipmod") return "Unity3D 文件不在当前 zipmod 内，由其它 zipmod 提供。";
@@ -5416,6 +6087,7 @@ function unity3dIssueSolution(issue) {
   if (issue.type === "manifest_author") return "补充并保存 manifest.xml 的作者字段。";
   if (issue.type === "thumbnail") return "重新导入或生成物品缩略图。";
   if (issue.type === "duplicate_zipmod") return "分析同 GUID 的 zipmod 并保留推荐项。";
+  if (issue.type === "unity3d_compression") return "使用 LZMA 重新压缩 Unity3D，并重新打包模组。";
   if (issue.status === "error") return "重新安装来源模组，或替换该 unity3d 文件后重建数据库。";
   if (["in_game", "not_in_mod"].includes(issue.status)) {
     if (issue.source === "other_zipmod") {
@@ -5485,6 +6157,7 @@ function thumbnailIssueReason(item) {
 async function repairUnity3dIssue(issue) {
   if (!selectedMod.value || !issue?.path) return;
   repairingUnity3dPath.value = issue.path;
+  unity3dRepairResult.value = null;
   try {
     const result = await window.desktopApi?.backendRequest?.(
       `/mods/zipmods/${selectedMod.value.id}/repair-unity3d`,
@@ -5496,6 +6169,7 @@ async function repairUnity3dIssue(issue) {
     if (!result?.ok) {
       throw new Error(result?.error || "\u4fee\u590d\u5931\u8d25");
     }
+    unity3dRepairResult.value = result;
     log(`[Mods] ${result.message || "unity3d repair completed"}`);
     selectedModDiagnostics.value = null;
     await loadSelectedModDiagnostics();
@@ -5533,6 +6207,38 @@ async function submitBulkRepairUnity3dFromGame() {
     log(`[Mods Error] ${error.message}`);
   } finally {
     bulkActionBusy.value = "";
+  }
+}
+
+function openBulkRepackPrompt() {
+  if (selectedModCount.value === 0 || bulkActionBusy.value) return;
+  bulkRepackPrompt.error = "";
+  bulkRepackPrompt.open = true;
+}
+
+async function submitBulkRepackUnity3d() {
+  const zipmodIds = [...selectedModIds.value];
+  if (zipmodIds.length === 0 || bulkActionBusy.value) return;
+
+  bulkActionBusy.value = "repack";
+  bulkRepackPrompt.error = "";
+  try {
+    await submitTaskInBackground("bulk_repack_zipmods_unity3d_lzma", { zipmod_ids: zipmodIds }, async (task) => {
+      if (task.status === "completed") {
+        selectedModDiagnostics.value = null;
+        await refreshModDatabaseList();
+      } else if (task.status === "failed") {
+        bulkRepackPrompt.error = task.error || "批量重压缩失败";
+        bulkRepackPrompt.open = true;
+        log(`[Mods Error] ${bulkRepackPrompt.error}`);
+      }
+      bulkActionBusy.value = "";
+    });
+    bulkRepackPrompt.open = false;
+  } catch (error) {
+    bulkRepackPrompt.error = error.message;
+    bulkActionBusy.value = "";
+    log(`[Mods Error] ${error.message}`);
   }
 }
 
@@ -6514,6 +7220,7 @@ async function checkModDatabase() {
     stats.zipmodErrors = Number(database.zipmod_error_count ?? stats.zipmodErrors);
     stats.zipmodWarnings = Number(database.zipmod_warning_count ?? stats.zipmodWarnings);
     stats.duplicateZipmods = Number(database.duplicate_guid_count ?? stats.duplicateZipmods);
+    stats.zipmodTotalBytes = Number(database.zipmod_total_bytes ?? stats.zipmodTotalBytes ?? 0);
     stats.lastDatabaseBuiltAt = database.last_built_at || stats.lastDatabaseBuiltAt;
     itemDatabase.checked = true;
     itemDatabase.exists = Boolean(database.exists);
@@ -6536,7 +7243,9 @@ async function checkModDatabase() {
       itemRows.value = [];
       selectedItem.value = null;
       itemDatabase.offset = 0;
+      itemDatabase.pageOffset = 0;
       itemDatabase.hasMore = false;
+      itemDatabase.loadingPrevious = false;
     }
 
     if (!modDatabase.exists) {
@@ -6665,25 +7374,41 @@ async function loadModRows({ reset = false } = {}) {
   }
 }
 
-async function loadItemRows({ reset = false } = {}) {
+async function loadItemRows({ reset = false, direction = "next" } = {}) {
   if (libraryMode.value !== "items") return;
-  if (!reset && (itemDatabase.loading || itemDatabase.loadingMore)) return;
+  const loadingPrevious = !reset && direction === "previous";
+  if (!reset && (
+    itemDatabase.loading
+    || itemDatabase.loadingMore
+    || itemDatabase.loadingPrevious
+  )) return;
   if (!itemDatabase.exists) return;
   if (!reset && itemDatabase.total === 0) return;
-  if (!reset && !itemDatabase.hasMore && itemRows.value.length > 0) return;
+  if (loadingPrevious && itemDatabase.pageOffset <= 0) return;
+  if (!loadingPrevious && !itemDatabase.hasMore && itemRows.value.length > 0) return;
 
-  const offset = reset ? 0 : itemRows.value.length;
+  const offset = reset
+    ? 0
+    : loadingPrevious
+      ? Math.max(0, itemDatabase.pageOffset - itemDatabase.limit)
+      : itemDatabase.offset;
   const requestSeq = ++itemRowsRequestSeq;
+  const scrollTarget = loadingPrevious ? modTableScrollTarget.value : null;
+  const previousScrollTop = Number(scrollTarget?.scrollTop || 0);
+  const previousScrollHeight = Number(scrollTarget?.scrollHeight || 0);
   if (reset) {
     itemRows.value = [];
     selectedItem.value = null;
     itemDatabase.offset = 0;
+    itemDatabase.pageOffset = 0;
     itemDatabase.total = 0;
     itemDatabase.hasMore = false;
     itemDatabase.loadingMore = false;
+    itemDatabase.loadingPrevious = false;
   }
   itemDatabase.loading = reset;
-  itemDatabase.loadingMore = !reset;
+  itemDatabase.loadingMore = !reset && !loadingPrevious;
+  itemDatabase.loadingPrevious = loadingPrevious;
   itemDatabase.error = "";
 
   try {
@@ -6692,6 +7417,9 @@ async function loadItemRows({ reset = false } = {}) {
       limit: String(itemDatabase.limit)
     });
     if (itemFilters.search.trim()) query.set("search", itemFilters.search.trim());
+    if (itemNavigationZipmodId.value > 0) {
+      query.set("zipmod_id", String(itemNavigationZipmodId.value));
+    }
     if (itemFilters.kind) query.set("kind", itemFilters.kind);
     if (itemFilters.author) query.set("author", itemFilters.author);
     if (itemFilters.status) query.set("status", itemFilters.status);
@@ -6712,6 +7440,7 @@ async function loadItemRows({ reset = false } = {}) {
       itemRows.value = [];
       selectedItem.value = null;
       itemDatabase.offset = 0;
+      itemDatabase.pageOffset = 0;
       itemDatabase.total = 0;
       itemDatabase.hasMore = false;
       log("[Items] database changes checked");
@@ -6719,11 +7448,27 @@ async function loadItemRows({ reset = false } = {}) {
     }
 
     const rows = (data.rows || []).map(mapModItemRow);
-    itemRows.value = reset ? rows : [...itemRows.value, ...rows];
+    if (reset) {
+      itemRows.value = rows;
+      itemDatabase.pageOffset = offset;
+    } else if (loadingPrevious) {
+      itemRows.value = [...rows, ...itemRows.value];
+      itemDatabase.pageOffset = offset;
+    } else {
+      itemRows.value = [...itemRows.value, ...rows];
+    }
     if (reset) selectedItem.value = null;
-    itemDatabase.offset = itemRows.value.length;
+    if (!loadingPrevious) itemDatabase.offset = offset + rows.length;
     if (data.total != null) itemDatabase.total = Number(data.total || 0);
     itemDatabase.hasMore = Boolean(data.has_more);
+    if (loadingPrevious) {
+      await nextTick();
+      if (requestSeq === itemRowsRequestSeq && scrollTarget) {
+        const addedHeight = Math.max(0, scrollTarget.scrollHeight - previousScrollHeight);
+        scrollTarget.scrollTop = previousScrollTop + addedHeight;
+        captureModTableScrollPosition("items", scrollTarget);
+      }
+    }
   } catch (error) {
     if (requestSeq !== itemRowsRequestSeq) return;
     itemDatabase.error = error.message;
@@ -6732,6 +7477,7 @@ async function loadItemRows({ reset = false } = {}) {
     if (requestSeq === itemRowsRequestSeq) {
       itemDatabase.loading = false;
       itemDatabase.loadingMore = false;
+      itemDatabase.loadingPrevious = false;
     }
   }
 }
@@ -6849,9 +7595,13 @@ async function refreshModDatabaseList() {
 function handleModTableScroll(event) {
   const target = event.currentTarget;
   const remaining = target.scrollHeight - target.scrollTop - target.clientHeight;
+  if (modTableLocateInProgress) return;
   // Start item requests before the user reaches the absolute end so the
   // network/database work can overlap with the last visible rows.
   const preloadDistance = libraryMode.value === "items" ? 480 : 160;
+  if (libraryMode.value === "items" && target.scrollTop <= preloadDistance) {
+    void loadItemRows({ direction: "previous" });
+  }
   if (remaining >= preloadDistance) return;
 
   if (libraryMode.value === "items") {
@@ -6878,6 +7628,9 @@ function applyGameDir(selected) {
   modDatabase.exists = false;
   itemDatabase.checked = false;
   itemDatabase.exists = false;
+  itemDatabase.offset = 0;
+  itemDatabase.pageOffset = 0;
+  itemDatabase.loadingPrevious = false;
   zipmodAuthors.value = [];
   itemFilterAuthors.value = [];
   itemFilterKinds.value = [];
@@ -7729,6 +8482,7 @@ function applyTask(task, submissionOrder = null) {
       "bulk_organize_zipmods",
       "organize_all_zipmods_by_author",
       "bulk_repair_zipmods_unity3d",
+      "bulk_repack_zipmods_unity3d_lzma",
       "bulk_cleanup_duplicate_zipmods",
       "import_external_zipmods",
       "bulk_delete_zipmods",
@@ -8598,6 +9352,10 @@ async function openCardTagFilter() {
 
 function updateCardTagFilterSearch(value) {
   cardTagFilter.search = String(value || "");
+  if (!cardTagFilter.search.trim()) {
+    clearCardTagFilter();
+    return;
+  }
   cardTagFilter.open = true;
 }
 
@@ -8609,39 +9367,14 @@ function closeCardTagFilterSoon() {
   window.setTimeout(closeCardTagFilter, 120);
 }
 
-async function loadLibraryCardsByTag(tag) {
-  const selectedTag = String(tag || "").trim();
-  const requestId = ++cardTagLibraryRequestId;
-  cardTagFilter.libraryTag = selectedTag;
-  cardTagFilter.libraryCards = [];
-  cardTagFilter.resultsError = "";
-  if (!selectedTag || !backendReady.value || !paths.gameDir) {
-    cardTagFilter.resultsLoading = false;
-    return;
-  }
-
-  cardTagFilter.resultsLoading = true;
-  try {
-    const result = await window.desktopApi?.backendRequest?.(
-      `/library/cards?game_dir=${encodeQuery(paths.gameDir)}&scope=library&tag=${encodeQuery(selectedTag)}`
-    );
-    if (requestId !== cardTagLibraryRequestId) return;
-    if (!result?.ok) throw new Error(result?.error || "全库人物卡读取失败");
-    cardTagFilter.libraryCards = mapCharacterCardRows(result.cards);
-  } catch (error) {
-    if (requestId !== cardTagLibraryRequestId) return;
-    cardTagFilter.resultsError = error.message;
-    log(`[Cards Error] ${error.message}`);
-  } finally {
-    if (requestId === cardTagLibraryRequestId) cardTagFilter.resultsLoading = false;
-  }
-}
-
 function setCardTagScope(scope) {
   const normalizedScope = scope === "library" ? "library" : "directory";
   if (cardTagFilter.scope === normalizedScope) return;
   cardTagFilter.scope = normalizedScope;
+  cardGenderFilter.value = "all";
+  characterSideMode.value = normalizedScope === "library" ? "detail" : "tree";
   setCardDependencyFilter(cardDependencyFilter.value);
+  void selectCardFolder(selectedCardFolder.value);
 }
 
 function selectCardTagFilter(tag) {
@@ -8659,8 +9392,8 @@ function applyFirstCardTagFilterSuggestion() {
 function clearCardTagFilter() {
   cardTagFilter.search = "";
   cardTagFilter.error = "";
-  cardTagFilter.open = true;
   if (cardDependencyFilter.value.startsWith("tag:")) setCardDependencyFilter("all");
+  void openCardTagFilter();
 }
 
 function toggleTagPromptValue(prompt, tag) {
@@ -8758,7 +9491,7 @@ async function submitBulkAddCharacterCardTags() {
           const updatedByPath = new Map(
             (task.data?.updated || []).map((item) => [String(item.relative_path || ""), item])
           );
-          for (const card of [...cards.value, ...cardTagFilter.libraryCards]) {
+          for (const card of cards.value) {
             const updated = updatedByPath.get(card.relativePath);
             if (!updated) continue;
             card.tags = Array.isArray(updated.tags) ? updated.tags.map((tag) => String(tag)) : card.tags;
@@ -8860,6 +9593,7 @@ async function loadSelectedCardProfile(card = selectedCardDetail.value) {
       }));
       card.dependencyCount = selectedCardDependencies.value.length;
       card.missingCount = selectedCardDependencies.value.filter((dependency) => !dependency.matched).length;
+      card.missingModCount = countMissingCardMods(selectedCardDependencies.value);
       void loadCardDependencyRemoteCandidates(targetPath, selectedCardDependencies.value);
     }
   } catch (error) {
@@ -8878,6 +9612,18 @@ function normalizeCardDependencyGuid(dependency) {
   return String(dependency?.mod_id || dependency?.zipmod?.guid || dependency?.item?.zipmod_guid || "")
     .trim()
     .toLocaleLowerCase();
+}
+
+function countMissingCardMods(dependencies) {
+  const modIds = new Set();
+  let unresolvedWithoutMod = 0;
+  for (const dependency of dependencies || []) {
+    if (dependency?.matched) continue;
+    const modId = normalizeCardDependencyGuid(dependency);
+    if (modId) modIds.add(modId);
+    else unresolvedWithoutMod += 1;
+  }
+  return modIds.size + unresolvedWithoutMod;
 }
 
 function cardDependencyRemoteState(dependency) {
@@ -9232,6 +9978,7 @@ async function installCardDependency(dependency) {
               ? (currentCard.dependencies || [])
               : (selectedCardDependencies.value || []);
             currentCard.missingCount = dependencies.filter((item) => !item.matched).length;
+            currentCard.missingModCount = countMissingCardMods(dependencies);
             currentCard.dependencyCount = dependencies.length;
           }
         } else {
@@ -9302,6 +10049,7 @@ async function installAllCardDependencies() {
               ? (currentCard.dependencies || [])
               : (selectedCardDependencies.value || []);
             currentCard.missingCount = dependencies.filter((item) => !item.matched).length;
+            currentCard.missingModCount = countMissingCardMods(dependencies);
             currentCard.dependencyCount = dependencies.length;
           }
         }
@@ -9542,12 +10290,7 @@ function setCardDependencyFilter(value) {
     ? cardDependencyFilter.value.slice(4)
     : "";
   cardTagFilter.open = false;
-  cardTagLibraryRequestId += 1;
-  cardTagFilter.resultsLoading = false;
-  cardTagFilter.resultsError = "";
-  if (cardTagFilter.scope === "library" && cardDependencyFilter.value.startsWith("tag:")) {
-    void loadLibraryCardsByTag(cardDependencyFilter.value.slice(4));
-  }
+  resetCardLibraryScrollPosition("character");
   resetCardFilterSelectionState();
 }
 
@@ -9593,6 +10336,16 @@ function resetCardFilterSelectionState() {
 
 function toggleCardFavoriteFilter() {
   cardFavoriteFilter.value = !cardFavoriteFilter.value;
+  resetCardFilterSelectionState();
+}
+
+function setCardGenderFilter(value) {
+  const normalizedValue = ["female", "male"].includes(String(value || "").toLocaleLowerCase())
+    ? String(value).toLocaleLowerCase()
+    : "all";
+  if (cardGenderFilter.value === normalizedValue) return;
+  cardGenderFilter.value = normalizedValue;
+  resetCardLibraryScrollPosition("character");
   resetCardFilterSelectionState();
 }
 
@@ -10115,6 +10868,7 @@ const appCtx = reactive({
   cardMoveFolderRows,
   bulkDeleteErrorItemsPrompt,
   bulkCardTagPrompt,
+  bulkRepackPrompt,
   bulkDuplicateCleanupPrompt,
   cardBulkMode,
   cardBrowserCountText,
@@ -10129,6 +10883,7 @@ const appCtx = reactive({
   cardTagOptions,
   cardDependencyFilter,
   cardFavoriteFilter,
+  cardGenderFilter,
   cardDependencyExportPrompt,
   cardDetailTab,
   cardDependencyRemote,
@@ -10154,6 +10909,7 @@ const appCtx = reactive({
   managerSettings,
   settingsNotice,
   cardFolderDisplay,
+  cardBrowserPathDisplay,
   refreshCurrentCardFolder,
   cardFolders,
   cardLibrary,
@@ -10178,6 +10934,10 @@ const appCtx = reactive({
   loadMoreClothesCards,
   handleClothesCardGridScroll,
   clothesSideMode,
+  exportingSceneCharacters,
+  sceneCharacterExportNotice,
+  exportSelectedSceneCharacters,
+  revealSceneCharacterExport,
   sceneLibrary,
   sceneFolders,
   sceneCards,
@@ -10263,11 +11023,13 @@ const appCtx = reactive({
   ratingCardPath,
   cardRatingPulse,
   formatBytes,
+  formatByteChange,
   formatTaskDuration,
   formatTaskTimestamp,
   taskElapsedMs,
   taskTimingRows,
   taskResultRows,
+  formatTaskResultValue,
   formatDatabaseTime,
   formatProfileValue,
   formatPersonality,
@@ -10294,6 +11056,7 @@ const appCtx = reactive({
   scheduleCardLibraryScrollRestore,
   registerCardLibraryScrollContainer,
   unregisterCardLibraryScrollContainer,
+  clearItemSearch,
   isBusy,
   itemAuthorOptions,
   itemAuthorFilterOpen,
@@ -10318,6 +11081,7 @@ const appCtx = reactive({
   loadModRows,
   loadZipmodAuthors,
   loadGameSetup,
+  locateAssemblyCurrentItem,
   locateSourceMod,
   log,
   logs,
@@ -10338,6 +11102,7 @@ const appCtx = reactive({
   openBulkDuplicateCleanupPrompt,
   openBulkExportPrompt,
   openBulkOrganizePrompt,
+  openBulkRepackPrompt,
   openBulkRepairUnity3dPrompt,
   openCardDependencyExportPrompt,
   openCardDeletePrompt,
@@ -10384,6 +11149,7 @@ const appCtx = reactive({
   openingUnity3dItemId,
   exportingUnity3dItemId,
   repairingUnity3dPath,
+  unity3dRepairResult,
   repairThumbnailItem,
   openItemUnity3d,
   exportItemUnity3d,
@@ -10446,6 +11212,8 @@ const appCtx = reactive({
   closeAssemblyAccessoryPartMenu,
   assignAssemblyAccessoryPart,
   applyAssemblyItem,
+  clearAssemblyClothingSlot,
+  clearAssemblyAccessorySlot,
   refreshCurrentGameState,
   openItemContextMenu,
   closeItemContextMenu,
@@ -10478,6 +11246,9 @@ const appCtx = reactive({
   selectedModItems,
   selectedModItemsError,
   selectedModItemsLoading,
+  selectedModUnity3dDependencies,
+  selectedModUnity3dDependenciesError,
+  selectedModUnity3dDependenciesLoading,
   selectItem,
   beginWorkbenchTemplateSelection,
   selectWorkbenchTemplateFromItem,
@@ -10497,6 +11268,7 @@ const appCtx = reactive({
   setCardBrowserMode,
   setCardDependencyFilter,
   toggleCardFavoriteFilter,
+  setCardGenderFilter,
   setCardTagScope,
   toggleCardTagPromptTag,
   toggleBulkCardTagPromptTag,
@@ -10529,6 +11301,8 @@ const appCtx = reactive({
   visibleCards,
   unity3dIssueFileName,
   unity3dIssueSolution,
+  unity3dCompressionLabel,
+  unity3dDependencyReadStatusLabel,
   updateSetup,
   views,
   zipmodAuthors,
@@ -10551,6 +11325,7 @@ const appCtx = reactive({
   toggleCardMoveFolder,
   submitBulkDeleteErrorItems,
   submitBulkDuplicateCleanup,
+  submitBulkRepackUnity3d,
   cancelCardProfileEditor
 });
 
@@ -10775,7 +11550,6 @@ watch(backendStatus, (status, previousStatus) => {
               <div class="assembly-hero-copy">
                 <h3>{{ assemblyCharacterTarget.target === 'hscene' ? 'H 场景角色' : '角色编辑器' }}</h3>
                 <small v-if="assemblyContext.scene === 'hscene'">选择一个角色后查看并编辑其当前装配。</small>
-                <small v-else>读取当前角色的实时装配状态。</small>
               </div>
               <div v-if="assemblyContext.available" class="assembly-character-picker assembly-character-picker-topbar" aria-label="装配目标角色">
                 <button
@@ -11272,23 +12046,11 @@ watch(backendStatus, (status, previousStatus) => {
             <span class="risk-kicker">文件将进入回收站</span>
             <strong id="card-delete-title">批量删除人物卡</strong>
             <p class="subtext">将把已选择的 PNG 文件移入 runtime/trash/cards，原目录不会继续保留。</p>
-            <div class="prompt-note">
-              <span>将要删除</span>
-              <strong>{{ selectedCount }} 张人物卡</strong>
-            </div>
-            <div class="prompt-note">
-              <span>所在目录</span>
-              <strong class="mono">{{ cardFolderDisplay }}</strong>
-            </div>
-            <div class="prompt-note">
-              <span>可逆性</span>
-              <strong>可在回收站恢复或永久删除</strong>
-            </div>
             <div v-if="cardDeletePrompt.error" class="prompt-error">{{ cardDeletePrompt.error }}</div>
             <div class="prompt-actions">
               <button type="button" :disabled="cardDeletePrompt.busy" @click="cardDeletePrompt.open = false">取消</button>
               <button type="button" class="danger-action" :disabled="cardDeletePrompt.busy" @click="submitBulkDeleteCharacterCards">
-                {{ cardDeletePrompt.busy ? "删除中..." : `确认删除 ${selectedCount} 张人物卡` }}
+                {{ cardDeletePrompt.busy ? "删除中..." : "确认" }}
               </button>
             </div>
           </div>
@@ -11733,23 +12495,33 @@ watch(backendStatus, (status, previousStatus) => {
           </div>
         </div>
 
+        <div v-if="bulkRepackPrompt.open" class="prompt-backdrop" @click.self="bulkRepackPrompt.open = false">
+          <div class="prompt-panel">
+            <strong>批量重压缩 Unity3D</strong>
+            <p class="subtext">将已选模组中符合条件的未压缩 Unity3D 重压缩；不符合条件的模组会跳过。</p>
+            <div class="prompt-note">
+              <span>已选模组</span>
+              <strong>{{ selectedModCount }} 个</strong>
+            </div>
+            <div v-if="bulkRepackPrompt.error" class="prompt-error">{{ bulkRepackPrompt.error }}</div>
+            <div class="prompt-actions">
+              <button type="button" :disabled="bulkActionBusy === 'repack'" @click="bulkRepackPrompt.open = false">取消</button>
+              <button type="button" :disabled="bulkActionBusy === 'repack'" @click="submitBulkRepackUnity3d">
+                {{ bulkActionBusy === "repack" ? "重压缩中..." : "重压缩" }}
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div v-if="bulkDuplicateCleanupPrompt.open" class="prompt-backdrop" @click.self="bulkDuplicateCleanupPrompt.open = false">
           <div class="prompt-panel">
             <strong>智能清理重复模组</strong>
             <p class="subtext">对已选模组逐个分析重复 GUID 候选，并清理安全项。</p>
-            <div class="prompt-note">
-              <span>将改变</span>
-              <strong>删除通过分析判定安全的重复 zipmod 文件</strong>
-            </div>
-            <div class="prompt-note">
-              <span>不会改变</span>
-              <strong>当前主记录 zipmod 与需要人工判断的重复项</strong>
-            </div>
             <div v-if="bulkDuplicateCleanupPrompt.error" class="prompt-error">{{ bulkDuplicateCleanupPrompt.error }}</div>
             <div class="prompt-actions">
               <button type="button" :disabled="bulkActionBusy === 'duplicates'" @click="bulkDuplicateCleanupPrompt.open = false">取消</button>
               <button type="button" class="danger-action" :disabled="bulkActionBusy === 'duplicates'" @click="submitBulkDuplicateCleanup">
-                {{ bulkActionBusy === "duplicates" ? "分析清理中..." : `确认智能清理 ${selectedModCount} 个已选模组` }}
+                {{ bulkActionBusy === "duplicates" ? "分析清理中..." : "确认" }}
               </button>
             </div>
           </div>
@@ -11759,19 +12531,11 @@ watch(backendStatus, (status, previousStatus) => {
           <div class="prompt-panel">
             <strong>批量删除模组</strong>
             <p class="subtext">将已选 zipmod 文件移入 runtime/trash/mods，并移除相关数据库记录。</p>
-            <div class="prompt-note">
-              <span>将要改变</span>
-              <strong>删除 {{ selectedModCount }} 个已选 zipmod 文件</strong>
-            </div>
-            <div class="prompt-note">
-              <span>可逆性</span>
-              <strong>可在回收站恢复或永久删除</strong>
-            </div>
             <div v-if="bulkDeletePrompt.error" class="prompt-error">{{ bulkDeletePrompt.error }}</div>
             <div class="prompt-actions">
               <button type="button" :disabled="bulkActionBusy === 'delete'" @click="bulkDeletePrompt.open = false">取消</button>
               <button type="button" class="danger-action" :disabled="bulkActionBusy === 'delete'" @click="submitBulkDeleteZipmods">
-                {{ bulkActionBusy === "delete" ? "删除中..." : `确认删除 ${selectedModCount} 个 zipmod` }}
+                {{ bulkActionBusy === "delete" ? "删除中..." : "确认" }}
               </button>
             </div>
           </div>

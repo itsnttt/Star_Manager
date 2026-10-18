@@ -12,7 +12,7 @@
 
 | 文档 | 解决的问题 |
 | --- | --- |
-| [模组数据库设计](mod_database_design.md) | SQLite 表、字段、关系、扫描流程、状态和查询边界 |
+| [模组数据库设计](mod_database_design.md) | SQLite 表、字段、关系、Unity3D 压缩方式检测（含未压缩依赖警告）、状态和查询边界；物品浏览当前以 256 条批次增量加载 |
 | [模组数据库建库性能基准](mod_database_build_benchmark.md) | 现有数据库 100 个 zipmod 的建库耗时、ZIP 读取/解压与 Unity3D 缩略图阶段拆分和优化建议 |
 | [原版资源索引建库性能基准](builtin_resource_build_benchmark.md) | 实际 HS2 目录的 ChaListData、MapInfo/HPoint 和原版缩略图建库耗时、阶段拆分和优化建议 |
 | [单物品缩略图重建抽样基准](item_thumbnail_rebuild_benchmark.md) | 30 个数据库物品的原图导出与写回计时、归档重写/重扫拆分及优化建议 |
@@ -22,13 +22,15 @@
 | [Studio 女性姿势转换](pose_zipmod_conversion.md) | Studio `.dat` 姿势到 `Kind=501` zipmod 的 CSV、Animator/AnimationClip、骨骼映射和验证边界 |
 | [KK Animations ForMaker 注册补全](kk_animations_formaker_completion.md) | 完整 KK Animations 动画包与 ForMaker 姿势列表补丁的结构关系和全量注册结果 |
 | [`[cth]kaidongsiwa` AABB 修复](cth_kaidongsiwa_aabb_repair.md) | 服饰 Unity3D `SkinnedMeshRenderer` 包围盒异常、旁置修复和静态验证结果 |
+| [`[xu]_[Mac]hcxz` LZ4 重打包记录](unity3d_lz4_repack_xu_mac_hcxz.md) | UnityFS 未压缩判定、只改外层 block compression 的 LZ4 重打包、payload 校验和大小对比 |
+| [LS `PT0000480846` Unity3D 保护层诊断](ls-pt-protected-unity3d.md) | LS 作者自定义 PT 封装的识别、同作者对照和当前恢复边界 |
 
 ### 2. 再了解变更和异常
 
 | 文档 | 解决的问题 |
 | --- | --- |
 | [数据库变动检测](mod_database_change_detection.md) | 新增、移除、修改、重复 GUID、manifest/物品建库线程数、stale 和依赖重连 |
-| [模组异常分类](mod_exception_catalog.md) | 异常类型、触发条件、UI 标题和当前修复入口 |
+| [模组异常分类](mod_exception_catalog.md) | 异常类型（含未压缩 Unity3D 警告）、触发条件、UI 标题和当前修复入口（含批量重压缩） |
 
 ### 3. 需要处理角色卡时阅读解析细节
 
@@ -54,7 +56,8 @@
 | 修改角色卡页面关联展示 | [角色卡解析说明](character_card_parsing.md) → [前端 UI 专题索引](../frontend-ui/README.md) |
 | 修改场景卡解析或关联展示 | [Studio 场景卡解析说明](scene_card_parsing.md) → [角色卡库布局](../frontend-ui/character-cards-layout.md) → [前端 UI 专题索引](../frontend-ui/README.md) |
 | 修改原版物品扫描、H 点地图或服装卡原版关联 | [游戏原版资源索引](builtin_resource_index.md) → [服装卡样本解析报告](clothes_card_sample_analysis.md) → [角色卡库布局](../frontend-ui/character-cards-layout.md) |
-| 修改缩略图或 Unity3D 修复 | [标准模组结构记录](standard_mod_structure_record.md) → [模组异常分类](mod_exception_catalog.md) → [Unity3D 解密与修复](../unity3d-decryption-notes.md)（含未知加密方式按 GUID→作者查询未加密参考模组、57 字节包裹、内嵌资源流、`wenchenyinger` profile、B002 三张流式纹理内嵌和 `.resS` 移除） |
+| 修改缩略图或 Unity3D 修复 | [标准模组结构记录](standard_mod_structure_record.md) → [模组异常分类](mod_exception_catalog.md) → [Unity3D 解密与修复](../unity3d-decryption-notes.md)（含 NB 固定 529 字节前缀、未知加密方式按 GUID→作者查询未加密参考模组、57 字节包裹、内嵌资源流、`wenchenyinger` profile、B002 三张流式纹理内嵌和 `.resS` 移除） |
+| 将未压缩 UnityFS 重打包为 LZ4 | [`[xu]_[Mac]hcxz` LZ4 重打包记录](unity3d_lz4_repack_xu_mac_hcxz.md) → [标准模组结构记录](standard_mod_structure_record.md) |
 | 诊断 Sims 4 FBX 灰黑块或黑三角 | [FBX 灰黑块修复记录](../sims4-fbx-gray-black-artifact-repair.md) → [Unity3D 解密与修复](../unity3d-decryption-notes.md) |
 | 修改 API 或批量任务 | [前后端接口](../backend-interface.md) → 本目录对应数据文档 |
 

@@ -450,6 +450,151 @@ class CardLibraryListingTests(unittest.TestCase):
                 ["female/Collection/matching.png"],
             )
 
+    def test_library_scope_lists_all_recursive_cards_with_pagination(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game = Path(temp_dir)
+            card_root = game / "UserData" / "chara"
+            cards = [
+                card_root / "female" / "first.png",
+                card_root / "female" / "nested" / "second.png",
+                card_root / "male" / "third.png",
+                card_root / "navi" / "ignored.png",
+            ]
+            for card in cards:
+                card.parent.mkdir(parents=True, exist_ok=True)
+                card.write_bytes(b"card")
+
+            with patch("star_manager.services.card_library.is_hs2_game_dir", return_value=True), patch(
+                "star_manager.services.card_library.read_character_card_listing_data",
+                side_effect=lambda path: {
+                    "name": path.stem,
+                    "favorite": False,
+                    "rating": 0,
+                    "tags": [],
+                },
+            ):
+                result = list_character_cards(
+                    str(game),
+                    db_path=game / "missing.sqlite",
+                    recursive=True,
+                    offset=1,
+                    limit=1,
+                )
+
+            self.assertTrue(result["recursive"])
+            self.assertEqual(result["total"], 3)
+            self.assertTrue(result["has_more"])
+            self.assertEqual([card["relative_path"] for card in result["cards"]], ["female/nested/second.png"])
+
+    def test_library_scope_uses_current_index_for_page_without_reading_other_pngs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            game = root / "game"
+            card_root = game / "UserData" / "chara"
+            card_paths = [
+                card_root / "female" / "first.png",
+                card_root / "female" / "nested" / "second.png",
+                card_root / "male" / "third.png",
+            ]
+            db_path = root / "cards.sqlite"
+            for card in card_paths:
+                card.parent.mkdir(parents=True, exist_ok=True)
+                card.write_bytes(b"card")
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            init_db(conn)
+            with conn:
+                for card in card_paths:
+                    stat = card.stat()
+                    conn.execute(
+                        """
+                        INSERT INTO character_cards (
+                            file_path, relative_path, file_name, chara_name,
+                            parse_status, metadata_file_size, metadata_modified_ns,
+                            last_scanned_at
+                        ) VALUES (?, ?, ?, ?, 'ok', ?, ?, '')
+                        """,
+                        (
+                            str(card.resolve()),
+                            str(card.relative_to(card_root)).replace("\\", "/"),
+                            card.name,
+                            card.stem,
+                            stat.st_size,
+                            stat.st_mtime_ns,
+                        ),
+                    )
+            conn.close()
+
+            with patch("star_manager.services.card_library.is_hs2_game_dir", return_value=True), patch(
+                "star_manager.services.card_library.read_character_card_listing_data",
+                side_effect=AssertionError("current recursive page should use indexed metadata"),
+            ):
+                result = list_character_cards(
+                    str(game),
+                    db_path=db_path,
+                    recursive=True,
+                    offset=1,
+                    limit=1,
+                )
+
+            self.assertEqual(result["total"], 3)
+            self.assertEqual([card["relative_path"] for card in result["cards"]], ["female/nested/second.png"])
+            self.assertTrue(result["has_more"])
+            self.assertEqual(result["timings"]["listing_reads"], 0)
+
+    def test_library_scope_supports_500_card_pages_and_preserves_directory_cap(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game = Path(temp_dir)
+            card_root = game / "UserData" / "chara"
+            folder = card_root / "female"
+            folder.mkdir(parents=True)
+            db_path = game / "cards.sqlite"
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            init_db(conn)
+            with conn:
+                for index in range(501):
+                    card = folder / f"{index:04d}.png"
+                    card.write_bytes(b"card")
+                    stat = card.stat()
+                    conn.execute(
+                        """
+                        INSERT INTO character_cards (
+                            file_path, relative_path, file_name, chara_name,
+                            parse_status, metadata_file_size, metadata_modified_ns,
+                            last_scanned_at
+                        ) VALUES (?, ?, ?, ?, 'ok', ?, ?, '')
+                        """,
+                        (str(card.resolve()), f"female/{card.name}", card.name,
+                         card.stem, stat.st_size, stat.st_mtime_ns),
+                    )
+            conn.close()
+
+            with patch("star_manager.services.card_library.is_hs2_game_dir", return_value=True), patch(
+                "star_manager.services.card_library.read_character_card_listing_data",
+                side_effect=AssertionError("indexed pages must not parse PNG metadata"),
+            ):
+                first = list_character_cards(str(game), db_path=db_path, recursive=True, limit=500)
+                second = list_character_cards(
+                    str(game), db_path=db_path, recursive=True, offset=500, limit=500,
+                )
+                all_cards = list_character_cards(str(game), db_path=db_path, recursive=True)
+                capped = list_character_cards(str(game), db_path=db_path, recursive=True, limit=999)
+                directory = list_character_cards(str(game), "female", db_path=db_path, limit=500)
+
+            self.assertEqual(first["total"], 501)
+            self.assertEqual(len(first["cards"]), 500)
+            self.assertTrue(first["has_more"])
+            self.assertEqual(first["timings"]["listing_reads"], 0)
+            self.assertEqual([card["relative_path"] for card in second["cards"]], ["female/0500.png"])
+            self.assertFalse(second["has_more"])
+            self.assertEqual(len(all_cards["cards"]), 501)
+            self.assertIsNone(all_cards["limit"])
+            self.assertFalse(all_cards["has_more"])
+            self.assertEqual(all_cards["timings"]["listing_reads"], 0)
+            self.assertEqual(len(capped["cards"]), 500)
+            self.assertEqual(len(directory["cards"]), 240)
+
     def test_changed_indexed_card_refreshes_listing_cache_without_hiding_database_change(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

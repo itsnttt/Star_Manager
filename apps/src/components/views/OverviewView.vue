@@ -33,7 +33,7 @@ const { ctx } = defineProps({
               <section class="panel achievement-panel achievement-panel--embedded">
                 <div class="module-head achievement-head">
                   <div>
-                    <h2>成就陈列柜</h2>
+                    <h2>成就</h2>
                   </div>
                 </div>
                 <div v-if="ctx.achievementPreferences.enabled && ctx.visibleAchievements.length" class="achievement-grid">
@@ -67,15 +67,15 @@ const { ctx } = defineProps({
             </div>
             <aside class="overview-stack">
               <section class="panel">
-                <div class="module-head"><h2>实用工具</h2></div>
+                <div class="module-head"><h2>工具</h2></div>
                 <div class="action-list">
-                  <button class="action-item" @click="ctx.importExternalZipmods"><span><strong>导入外部模组</strong><small>扫描 zipmod 和标准结构的 zip，诊断并保留更完整版本。</small></span><span>→</span></button>
+                  <button class="action-item action-item--import" @click="ctx.importExternalZipmods"><span><strong>导入外部模组</strong><small>扫描 zipmod 和标准结构的 zip，诊断并保留更完整版本。</small></span><span>→</span></button>
                   <button class="action-item action-item--organize" @click="ctx.openOrganizeAllPrompt"><span><strong>一键整理</strong><small>将 mods 下全部 zipmod 移入对应的作者子目录。</small></span><span>→</span></button>
                   <button class="action-item action-item--card-cleanup" @click="ctx.openDuplicateClothingPrompt"><span><strong>人物卡清理</strong><small>分析服装依赖重复度，找出可以移入回收站的重复人物卡。</small></span><span>→</span></button>
                 </div>
               </section>
               <section v-if="ctx.recentTasks.length" class="panel overview-task-panel">
-                <div class="module-head"><h2>最近任务</h2></div>
+                <div class="module-head"><h2>任务</h2></div>
                 <div class="task-list">
                   <button
                     v-for="task in ctx.recentTasks"
@@ -157,13 +157,16 @@ const { ctx } = defineProps({
               <section v-if="ctx.taskResultRows(ctx.selectedTask).length" class="task-drawer-section">
                 <div class="task-drawer-section-head"><h3>完成情况</h3></div>
                 <div class="task-result-grid">
-                  <div v-for="row in ctx.taskResultRows(ctx.selectedTask)" :key="row[0]"><span>{{ row[0] }}</span><strong>{{ ctx.formatStat(row[1]) }}</strong></div>
+                  <div v-for="row in ctx.taskResultRows(ctx.selectedTask)" :key="row[0]"><span>{{ row[0] }}</span><strong>{{ ctx.formatTaskResultValue(row) }}</strong></div>
                 </div>
               </section>
 
               <section class="task-drawer-section task-message-section">
-                <div class="task-drawer-section-head"><h3>任务日志</h3><span>{{ ctx.selectedTask.messages?.length || 0 }} 条</span></div>
+                <div class="task-drawer-section-head"><h3>任务日志</h3><span>{{ (ctx.selectedTask.messages?.length || 0) + (ctx.selectedTask.messages_truncated || 0) }} 条</span></div>
                 <div class="task-message-list">
+                  <p v-if="ctx.selectedTask.messages_truncated" class="task-message-muted">
+                    已省略 {{ ctx.selectedTask.messages_truncated }} 条较早日志
+                  </p>
                   <p v-for="(message, index) in ctx.selectedTask.messages" :key="`${index}-${message}`">{{ message }}</p>
                   <p v-if="ctx.selectedTask.error" class="task-message-error">{{ ctx.selectedTask.error }}</p>
                 </div>

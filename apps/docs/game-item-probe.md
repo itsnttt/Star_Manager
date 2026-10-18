@@ -10,10 +10,11 @@
 4. 已修复原先每 5 秒全量扫描导致的周期性卡顿：静态目录只在首次初始化成功或手动 `/api/refresh` 时扫描；当前角色状态单独轻量更新。
 5. 已在当前 HS2 游戏中实际调用接口，将角色上衣切换到原生物品后又恢复为原来的模组服装，两个命令均返回 `succeeded`。
 6. 已确认 HS2 `ChaControl.ChangeHair(Int32 kind, Int32 id, Boolean forceChange)` 的真实签名；头发类别与 `ChaFileHair.parts` 栏位一一对应，探针 `0.5.0` 支持固定栏位换装和面部/身体当前状态读取。
-7. `0.8.0` 已增加面部物品换装：脸型、脸部肌肤/细节、胡子、眉毛、睫毛、眼影、美瞳、瞳孔、眼睛高光、腮红、口红和痣/雀斑均通过当前 HS2 原生面部更新路径提交；美瞳和瞳孔必须显式指定左眼或右眼。
-8. `0.9.0` 已增加身体物品换装：身体肌肤、身体细节、身体晒痕、身体彩绘、乳头和阴毛均使用当前 HS2 原生身体更新路径；身体彩绘必须显式指定彩绘层。
-9. `0.9.0` 已增加 H 场景单件物品目标：通过 `HScene.GetFemales()`/`GetMales()` 定位角色，支持服装、头发、面部、身体和配饰的单件换装，不执行整卡替换。
-10. `0.9.0` 已增加 `GET /api/context`，用于枚举当前场景、角色制作器角色以及 H 场景中的女性/男性角色槽位，并返回每个角色的完整当前装配状态。
+7. `0.9.6` 起，单件服饰和配饰换装会在启动原生协程前把目标字段写入 `ChaFileControl.coordinate`，并保留 `nowCoordinate` 给原生协程更新，避免画面已换装但随后保存人物卡仍写入旧服饰，也不触发原生 `forceChange=false` 的已装备短路。
+8. `0.8.0` 已增加面部物品换装：脸型、脸部肌肤/细节、胡子、眉毛、睫毛、眼影、美瞳、瞳孔、眼睛高光、腮红、口红和痣/雀斑均通过当前 HS2 原生面部更新路径提交；美瞳和瞳孔必须显式指定左眼或右眼。
+9. `0.9.0` 已增加身体物品换装：身体肌肤、身体细节、身体晒痕、身体彩绘、乳头和阴毛均使用当前 HS2 原生身体更新路径；身体彩绘必须显式指定彩绘层。
+10. `0.9.0` 已增加 H 场景单件物品目标：通过 `HScene.GetFemales()`/`GetMales()` 定位角色，支持服装、头发、面部、身体和配饰的单件换装，不执行整卡替换。
+11. `0.9.0` 已增加 `GET /api/context`，用于枚举当前场景、角色制作器角色以及 H 场景中的女性/男性角色槽位，并返回每个角色的完整当前装配状态。
 
 ### 装配模式的产品约定
 
@@ -386,7 +387,7 @@ Star Manager 当前界面把服饰类别 `140`、`141`、`144`、`147`、`240`�
 ### Star Manager 集成边界
 
 - 前端调用 `/game-item-probe/apply`，后端只代理到 `127.0.0.1:7880`（可用 `STAR_MANAGER_GAME_ITEM_PROBE_PORT` 覆盖），并通过 `/game-item-probe/command` 轮询结果。
-- 默认换装只影响当前 `CharaCustom.CustomBase.chaCtrl`；若请求显式使用 `target: "hscene"`，则只影响所选的 H 场景 `ChaControl`。普通模式从右键菜单提交，装配模式从已筛选物品的左键提交；不会写入数据库、zipmod、CSV、角色卡或服装卡。原版物品使用 `CategoryNo + item_id/localSlot`，模组物品使用 GUID + CategoryNo + CSV slot。
+- 默认换装只影响当前 `CharaCustom.CustomBase.chaCtrl`；若请求显式使用 `target: "hscene"`，则只影响所选的 H 场景 `ChaControl`。普通模式从右键菜单提交，装配模式从已筛选物品的左键提交；不会写入数据库、zipmod、CSV 或服装卡。角色制作器单件服饰/配饰换装会同步内存中的 `chaFile.coordinate`，因此用户随后通过游戏原生保存人物卡时会保存当前物品；探针不自行创建或写入人物卡文件。原版物品使用 `CategoryNo + item_id/localSlot`，模组物品使用 GUID + CategoryNo + CSV slot。
 - 探针端口不携带游戏目录认证；调用方必须确认当前运行并占用该端口的 HS2 与 Star Manager 选中的游戏目录一致，否则可能对另一份游戏进程中的角色执行操作。
 - 命令 `succeeded` 只表示游戏原生换装方法已接受调用，不代表所有贴图已完成异步加载。
 - 插件未运行、未进入角色制作器、类别无效、头发栏位与类别不匹配、物品缺失、映射冲突、队列满和命令超时都必须作为失败反馈；前端不得回退到名称匹配。
@@ -411,3 +412,6 @@ Star Manager 当前界面把服饰类别 `140`、`141`、`144`、`147`、`240`�
 - `2026-09-24` 增加 H 场景人物卡完整读取：解析器接受 `target: "hscene"` 的 `type: "card"`，使用 `LoadCharaFile → ChangeNowCoordinate → Reload`；后端 payload 测试、前端生产构建和当前 HS2 程序集编译均已通过。
 - `2026-09-24` 修复 H 场景人物卡加载超时：完整 `type: "card"` 流程使用 120 秒专用延迟超时。此前沿用 12 秒通用超时，遇到 `ChaControl.Reload`、Sideloader 或第三方角色控制器同步耗时时，会在人物卡已经写入后误报 `execution_error`。该调整不改变普通单件换装和角色编辑器人物卡读取。
 - `2026-09-25` 根据 `HS2_HCharaSwitcher` 实机探针记录移除额外 HScene 控制器重绑定和后台队列锁；原生 `Reload` 返回后直接释放命令队列，避免连续读取时后续命令过期。
+- `2026-10-11` 修复装配模式单件服饰/配饰换装后保存人物卡仍保留旧服饰的问题。调查当前 HS2 `Assembly-CSharp.dll` 的 IL 后确认：`ChangeClothes` 和 `ChangeAccessory` 启动的协程把运行时状态写入 `ChaControl.nowCoordinate`，而 `ChaFileControl.SaveCharaFile` 直接序列化 `chaFile.coordinate`；原生编辑器 UI 另有同步步骤，探针原先没有复现。`0.9.6` 在调用原生换装方法前把目标服装或配饰字段写入 `chaFile.coordinate`，保持 `nowCoordinate` 的旧值供原生 `forceChange=false` 判断，然后仍调用原生 `ChangeClothes`/`ChangeAccessory` 负责资源加载。配饰的 `parentKey` 从同一 `ListInfoBase` 解析，显式请求值优先。插件已使用目标 HS2 程序集 Release 构建通过（0 警告、0 错误）。适用边界：这是单件运行时换装的卡片持久化修复，不替代模组异步资源加载；保存前仍应确认画面和 `/api/current` 已显示目标物品，H 场景角色的运行时状态不会自动变成一个新的角色卡文件。
+- `2026-10-11` 增加服装和配饰栏位清除语义：装配模式清除按钮对服装提交对应 `categoryNo + localSlot=0`，对配饰提交 `categoryNo=350 + localSlot=0 + slotNo`；探针对服装允许空栏位即使 `ChaListControl` 没有 `localSlot 0` 的列表项，并先将对应 `ChaFileCoordinate.parts[kind].id` 写为 `0`，再调用 `ChangeClothes(kind, 0, false)`。配饰沿用已有的 `categoryNo=350/id=0` 空物品路径，调用 `ChangeAccessory(slotNo, 350, 0, "", false)`。两种操作只影响当前角色或选中的 H 场景角色，不删除物品库数据，也不创建人物卡文件。
+- 装配模式栏位二次点击定位使用探针当前项的 `resolverRecords`。模组项按 `GUID + CategoryNo + CSV slot` 查询物品库，原版项按 `CategoryNo + localSlot` 查询；探针只提供当前状态和解析记录，不执行定位或列表滚动。

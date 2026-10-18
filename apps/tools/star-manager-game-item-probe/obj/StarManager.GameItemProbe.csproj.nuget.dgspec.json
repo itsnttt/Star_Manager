@@ -5,12 +5,12 @@
   },
   "projects": {
     "D:\\Workspace\\code_workspace\\Star_Manager\\apps\\tools\\star-manager-game-item-probe\\StarManager.GameItemProbe.csproj": {
-      "version": "0.9.5",
+      "version": "0.9.6",
       "restore": {
         "projectUniqueName": "D:\\Workspace\\code_workspace\\Star_Manager\\apps\\tools\\star-manager-game-item-probe\\StarManager.GameItemProbe.csproj",
         "projectName": "StarManager.GameItemProbe",
         "projectPath": "D:\\Workspace\\code_workspace\\Star_Manager\\apps\\tools\\star-manager-game-item-probe\\StarManager.GameItemProbe.csproj",
-        "packagesPath": "C:\\Users\\CodexSandboxOffline\\.nuget\\packages\\",
+        "packagesPath": "C:\\Users\\yukilat\\.nuget\\packages\\",
         "outputPath": "D:\\Workspace\\code_workspace\\Star_Manager\\apps\\tools\\star-manager-game-item-probe\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [

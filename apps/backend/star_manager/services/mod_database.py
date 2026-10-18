@@ -40,6 +40,7 @@ from star_manager.services.mod_database_queries import (
     list_workbench_template_items,
     list_zipmod_authors,
     list_zipmods,
+    list_zipmod_unity3d_dependencies,
     resolve_thumbnail_cache_path,
 )
 from star_manager.services.model_preview import (
@@ -56,6 +57,7 @@ from star_manager.services.model_preview import (
 from star_manager.services.mod_database_assets import (
     analyze_duplicate_zipmods,
     begin_thumbnail_profile,
+    bulk_repack_zipmods_unity3d_lzma,
     bulk_repair_zipmods_unity3d_from_game,
     cleanup_duplicate_zipmods,
     choose_primary,
@@ -71,10 +73,12 @@ from star_manager.services.mod_database_assets import (
     find_header_index,
     get_zipmod_manifest,
     inspect_unity3d_status,
+    inspect_unity3d_dependency_records,
     is_map_scene_item,
     is_unity3d_path,
     main_unity3d_reference_paths,
     import_zipmod_item_thumbnail,
+    summarize_unity3d_compression,
     iter_open_zip_csv_items,
     iter_zip_csv_items,
     ZIPMOD_READ_ERRORS,
@@ -86,6 +90,7 @@ from star_manager.services.mod_database_assets import (
     preextract_zip_unity_thumbnails,
     read_items_from_csv,
     read_manifest,
+    repair_zipmod_unity3d_lzma,
     repair_zipmod_unity3d_from_game,
     remove_unseen_zipmods,
     replace_duplicate_records,
@@ -566,6 +571,15 @@ def prepare_mod_items(
     status_zip: zipfile.ZipFile | None = None
     status_zip_index: ZipMemberIndex | None = None
     status_zip_error = ""
+    unity3d_compression = ""
+    unity3d_compression_counts = {
+        "none": 0,
+        "lzma": 0,
+        "lz4": 0,
+        "other": 0,
+        "unknown": 0,
+    }
+    unity3d_dependencies: list[dict[str, str]] = []
     try:
         status_zip = zipfile.ZipFile(candidate.path, "r")
         status_zip_index = ZipMemberIndex(status_zip)
@@ -581,6 +595,13 @@ def prepare_mod_items(
             csv_items = []
         else:
             csv_items = list(iter_open_zip_csv_items(status_zip, candidate.manifest.name))
+            unity3d_dependencies, unity3d_compression_counts = inspect_unity3d_dependency_records(
+                game_dir,
+                status_zip,
+                status_zip_index,
+                csv_items,
+            )
+            unity3d_compression = summarize_unity3d_compression(unity3d_compression_counts)
             preextract_zip_unity_thumbnails(
                 candidate,
                 [
@@ -700,6 +721,13 @@ def prepare_mod_items(
         unity3d_other_mod_count=other_mod,
         unity3d_missing_count=missing,
         unity3d_error=unity3d_error,
+        unity3d_compression=unity3d_compression,
+        unity3d_uncompressed_count=unity3d_compression_counts.get("none", 0),
+        unity3d_lzma_count=unity3d_compression_counts.get("lzma", 0),
+        unity3d_lz4_count=unity3d_compression_counts.get("lz4", 0),
+        unity3d_other_count=unity3d_compression_counts.get("other", 0),
+        unity3d_unknown_count=unity3d_compression_counts.get("unknown", 0),
+        unity3d_dependencies=unity3d_dependencies,
         scan_status=scan_status,
         scan_error=scan_error,
     )
@@ -715,6 +743,13 @@ def failed_prepared_zipmod_items(error: str) -> PreparedZipmodItems:
         unity3d_in_game_count=0,
         unity3d_missing_count=0,
         unity3d_error="",
+        unity3d_compression="",
+        unity3d_uncompressed_count=0,
+        unity3d_lzma_count=0,
+        unity3d_lz4_count=0,
+        unity3d_other_count=0,
+        unity3d_unknown_count=0,
+        unity3d_dependencies=[],
         scan_status="read_error",
         scan_error=error,
     )
@@ -832,6 +867,34 @@ def replace_mod_items(
         )
 
     conn.execute(
+        "DELETE FROM zipmod_unity3d_dependencies WHERE zipmod_id = ?",
+        (zipmod_id,),
+    )
+    if prepared.unity3d_dependencies:
+        conn.executemany(
+            """
+            INSERT INTO zipmod_unity3d_dependencies (
+                zipmod_id, zipmod_guid, resource_path, member_path, source_kind,
+                compression, read_status, read_error, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    zipmod_id,
+                    candidate.manifest.guid,
+                    dependency.get("resource_path", ""),
+                    dependency.get("member_path", ""),
+                    dependency.get("source_kind", ""),
+                    dependency.get("compression", "unknown"),
+                    dependency.get("read_status", "missing"),
+                    dependency.get("read_error", ""),
+                    now,
+                )
+                for dependency in prepared.unity3d_dependencies
+            ],
+        )
+
+    conn.execute(
         """
         UPDATE zipmods
         SET item_count = ?,
@@ -842,6 +905,12 @@ def replace_mod_items(
             unity3d_other_mod_count = ?,
             unity3d_missing_count = ?,
             unity3d_error = ?,
+            unity3d_compression = ?,
+            unity3d_uncompressed_count = ?,
+            unity3d_lzma_count = ?,
+            unity3d_lz4_count = ?,
+            unity3d_other_count = ?,
+            unity3d_unknown_count = ?,
             updated_at = ?
         WHERE id = ?
         """,
@@ -854,6 +923,12 @@ def replace_mod_items(
             prepared.unity3d_other_mod_count,
             prepared.unity3d_missing_count,
             prepared.unity3d_error,
+            prepared.unity3d_compression,
+            prepared.unity3d_uncompressed_count,
+            prepared.unity3d_lzma_count,
+            prepared.unity3d_lz4_count,
+            prepared.unity3d_other_count,
+            prepared.unity3d_unknown_count,
             now,
             zipmod_id,
         ),

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import ModelPreview from "../ModelPreview.vue";
 import LazyThumbnail from "../LazyThumbnail.vue";
 import LoadingAnimation from "../LoadingAnimation.vue";
@@ -19,24 +19,49 @@ const thumbnailChoiceError = ref("");
 const expandedAssemblyGroup = ref("clothes");
 const selectedAssemblySlotKey = ref("");
 const modTableWrap = ref(null);
+const modTableBody = ref(null);
+const itemTable = ref(null);
+const registeredScrollTarget = ref(null);
+
+function currentScrollTarget() {
+  if (ctx.libraryMode === "mods") return modTableBody.value || modTableWrap.value;
+  if (ctx.itemViewMode === "table") return itemTable.value?.getScrollElement?.() || modTableWrap.value;
+  return modTableWrap.value;
+}
+
+function registerCurrentScrollTarget() {
+  const target = currentScrollTarget();
+  if (!target) return;
+  if (registeredScrollTarget.value && registeredScrollTarget.value !== target) {
+    ctx.unregisterModTableScrollContainer(registeredScrollTarget.value);
+  }
+  registeredScrollTarget.value = target;
+  ctx.registerModTableScrollContainer(target);
+}
 
 function handleModTableScroll(event) {
   ctx.captureModTableScrollPosition(ctx.libraryMode, event.currentTarget);
   ctx.handleModTableScroll(event);
 }
 
+function handleOuterScroll(event) {
+  if (ctx.libraryMode === "items" && ctx.itemViewMode !== "table") handleModTableScroll(event);
+}
+
 onMounted(() => {
-  ctx.registerModTableScrollContainer(modTableWrap.value);
+  registerCurrentScrollTarget();
 });
 
 onActivated(() => {
   // Keep the parent registration valid after KeepAlive moves this view back
   // into the workspace, then restore the current mode after the DOM returns.
-  ctx.registerModTableScrollContainer(modTableWrap.value);
+  registerCurrentScrollTarget();
 });
 
 onBeforeUnmount(() => {
-  ctx.unregisterModTableScrollContainer(modTableWrap.value);
+  if (registeredScrollTarget.value) {
+    ctx.unregisterModTableScrollContainer(registeredScrollTarget.value);
+  }
 });
 
 watch(() => [
@@ -46,7 +71,16 @@ watch(() => [
   ctx.itemDatabase?.loading,
   ctx.modDatabase?.loadingMore,
   ctx.itemDatabase?.loadingMore
-], () => ctx.scheduleModTableScrollRestore());
+], async () => {
+  await nextTick();
+  registerCurrentScrollTarget();
+  ctx.scheduleModTableScrollRestore();
+});
+
+watch(() => [ctx.libraryMode, ctx.itemViewMode], async () => {
+  await nextTick();
+  registerCurrentScrollTarget();
+});
 
 watch(() => ctx.assemblyMode, (enabled) => {
   if (!enabled) selectedAssemblySlotKey.value = "";
@@ -71,6 +105,10 @@ function assemblySlotKey(group, item) {
 }
 
 function assemblySlotTitle(group, item) {
+  if (
+    selectedAssemblySlotKey.value === assemblySlotKey(group, item)
+    && Number(item.localSlot || 0) !== 0
+  ) return "再次点击以定位左侧已装配物品";
   if (group.key === "accessories") return "右键选择饰品部位，点击后筛选该部位饰品";
   return `点击以筛选可装配到${ctx.gameCurrentSlotLabel(item)}的物品`;
 }
@@ -82,6 +120,13 @@ function handleAssemblySlotContextMenu(group, item, event) {
 
 async function selectAssemblySlot(group, item, event = null) {
   const key = assemblySlotKey(group, item);
+  if (
+    selectedAssemblySlotKey.value === key
+    && Number(item.localSlot || 0) !== 0
+  ) {
+    await ctx.locateAssemblyCurrentItem(item);
+    return;
+  }
   const selected = await ctx.selectAssemblySlot(item, group.key);
   if (selected) {
     selectedAssemblySlotKey.value = key;
@@ -148,6 +193,7 @@ const MOD_STATUS_TONES = {
   normal: "ok",
   warning: "warn",
   manifest_author: "warn",
+  unity3d_uncompressed: "warn",
   unity3d_in_game: "warn",
   unity3d_not_in_mod: "warn",
   thumbnail: "warn",
@@ -167,7 +213,10 @@ function modStatusTone(status) {
   <section class="view">
     <div class="mod-layout mod-management-layout">
       <section class="panel browser-panel mod-page glass-surface--compact">
-        <div class="module-head mod-head glass-surface--compact">
+        <div
+          class="module-head mod-head glass-surface--compact"
+          :class="{ 'item-library-head': ctx.libraryMode === 'items' }"
+        >
           <div class="mode-strip mod-tabs">
             <button :class="{ active: ctx.libraryMode === 'mods' }" type="button" @click="ctx.setLibraryMode('mods')">模组浏览</button>
             <button :class="{ active: ctx.libraryMode === 'items' }" type="button" @click="ctx.setLibraryMode('items')">物品浏览</button>
@@ -185,23 +234,41 @@ function modStatusTone(status) {
           </button>
           <div class="library-summary mod-summary">
             <span class="badge ok">{{ ctx.formatStat(ctx.modDatabase.total) }} zipmod</span>
-            <span class="badge">{{ ctx.formatStat(ctx.stats.modItems) }} items</span>
             <span class="badge warn">{{ ctx.formatStat(ctx.stats.zipmodWarnings) }} warnings</span>
             <span class="badge danger">{{ ctx.formatStat(ctx.stats.zipmodErrors) }} errors</span>
-            <span class="badge neutral">last {{ ctx.formatDatabaseTime(ctx.stats.lastDatabaseBuiltAt) }}</span>
+            <span class="badge neutral">{{ ctx.formatBytes(ctx.stats.zipmodTotalBytes) }}</span>
+            <span class="badge">{{ ctx.formatStat(ctx.stats.modItems) }} items</span>
           </div>
         </div>
 
-        <div class="toolbar library-toolbar glass-surface--compact">
+        <div
+          class="toolbar library-toolbar glass-surface--compact"
+          :class="{ 'item-library-toolbar': ctx.libraryMode === 'items' }"
+        >
           <template v-if="ctx.libraryMode === 'items'">
           <div class="toolbar-left filter-grid items">
-            <input
-              v-model="ctx.itemFilters.search"
-              class="search"
-              aria-label="搜索物品名字或模组 GUID"
-              placeholder="搜索物品名字 / 模组 GUID"
-              @input="ctx.scheduleItemSearch"
-            >
+            <div class="item-search-control">
+              <input
+                v-model="ctx.itemFilters.search"
+                class="search"
+                aria-label="搜索物品名字或模组 GUID"
+                placeholder="搜索物品名字 / 模组 GUID"
+                @input="ctx.scheduleItemSearch"
+              >
+              <button
+                v-if="ctx.itemFilters.search"
+                class="item-search-clear"
+                type="button"
+                aria-label="清除物品搜索"
+                title="清除搜索"
+                @mousedown.prevent
+                @click="ctx.clearItemSearch"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M6 6l12 12M18 6 6 18" fill="none"></path>
+                </svg>
+              </button>
+            </div>
             <div class="author-combobox" @keydown.esc="ctx.itemAuthorFilterOpen = false">
               <input
                 v-model="ctx.itemFilters.author"
@@ -334,6 +401,7 @@ function modStatusTone(status) {
               <option class="status-option-warn" value="warning">警告</option>
               <option class="status-option-warn" value="manifest_author">　缺少模组作者</option>
               <option class="status-option-warn" value="unity3d_not_in_mod">　unity3d未在模组内</option>
+              <option class="status-option-warn" value="unity3d_uncompressed">　未压缩unity3d</option>
               <option class="status-option-warn" value="thumbnail">　缩略图缺失</option>
               <option class="status-option-warn" value="duplicate_zipmod">　存在重复模组</option>
               <option class="status-option-danger" value="error">错误</option>
@@ -357,6 +425,19 @@ function modStatusTone(status) {
           </template>
 
           <div v-if="ctx.libraryMode === 'mods' && ctx.modBulkMode" class="bulk-action-bar" aria-label="批量操作">
+            <button
+              class="bulk-icon-button bulk-repack-action"
+              type="button"
+              title="批量重压缩 Unity3D"
+              aria-label="批量重压缩 Unity3D"
+              :aria-busy="ctx.bulkActionBusy === 'repack'"
+              :disabled="ctx.selectedModCount === 0 || Boolean(ctx.bulkActionBusy)"
+              @click="ctx.openBulkRepackPrompt"
+            >
+              <svg viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
+                <path d="M819.2 853.333333h-170.666667v-68.266666h102.4a68.266667 68.266667 0 0 0 68.266667-68.266667V307.2a68.266667 68.266667 0 0 0-68.266667-68.266667h-102.4V170.666667h170.666667a68.266667 68.266667 0 0 1 68.266667 68.266666v546.133334a68.266667 68.266667 0 0 1-68.266667 68.266666zM375.466667 307.2h102.4V136.533333h68.266666v170.666667h102.4l-136.533333 136.533333zM204.8 307.2v409.6a68.266667 68.266667 0 0 0 68.266667 68.266667h102.4v68.266666H204.8a68.266667 68.266667 0 0 1-68.266667-68.266666V238.933333a68.266667 68.266667 0 0 1 68.266667-68.266666h170.666667v68.266666H273.066667a68.266667 68.266667 0 0 0-68.266667 68.266667z m136.533333 170.666667h341.333334v68.266666H341.333333v-68.266666z m170.666667 102.4l136.533333 136.533333h-102.4v170.666667h-68.266666v-170.666667h-102.4z" fill="currentColor"></path>
+              </svg>
+            </button>
             <button
               class="bulk-icon-button bulk-export-action"
               type="button"
@@ -457,8 +538,11 @@ function modStatusTone(status) {
         <div
           ref="modTableWrap"
           class="table-wrap"
-          :class="{ 'mod-list-scrollbar': ctx.libraryMode === 'mods' }"
-          @scroll="handleModTableScroll"
+          :class="{
+            'mod-list-scrollbar': ctx.libraryMode === 'mods',
+            'item-list-table-mode': ctx.libraryMode === 'items' && ctx.itemViewMode === 'table'
+          }"
+          @scroll="handleOuterScroll"
         >
           <template v-if="ctx.libraryMode === 'items'">
             <div v-if="ctx.itemDatabase.loading && ctx.itemRows.length === 0" class="table-state">
@@ -492,6 +576,7 @@ function modStatusTone(status) {
               @item-contextmenu="(row, event) => ctx.openItemContextMenu(row, event)"
             />
             <VirtualItemTable
+              ref="itemTable"
               v-else
               :rows="ctx.itemRows"
               :selected-id="ctx.selectedItem?.id"
@@ -500,12 +585,14 @@ function modStatusTone(status) {
               @item-click="handleItemClick"
               @item-dblclick="handleItemDoubleClick"
               @item-contextmenu="(row, event) => ctx.openItemContextMenu(row, event)"
-            />
-            <div v-if="ctx.itemDatabase.exists" class="table-load-more">
-              <span v-if="ctx.itemDatabase.loadingMore">继续加载中...</span>
-              <span v-else-if="ctx.itemDatabase.hasMore">已加载 {{ ctx.itemRows.length.toLocaleString() }} / {{ ctx.itemDatabase.total.toLocaleString() }}</span>
-              <span v-else>已加载全部 {{ ctx.itemRows.length.toLocaleString() }} 个对象</span>
-            </div>
+              @scroll="handleModTableScroll"
+            >
+              <div v-if="ctx.itemDatabase.exists" class="table-load-more">
+                <span v-if="ctx.itemDatabase.loadingMore">继续加载中...</span>
+                <span v-else-if="ctx.itemDatabase.hasMore">已加载 {{ ctx.itemRows.length.toLocaleString() }} / {{ ctx.itemDatabase.total.toLocaleString() }}</span>
+                <span v-else>已加载全部 {{ ctx.itemRows.length.toLocaleString() }} 个对象</span>
+              </div>
+            </VirtualItemTable>
           </template>
 
           <div v-else-if="ctx.modDatabase.loading && ctx.modRows.length === 0" class="table-state">
@@ -528,59 +615,67 @@ function modStatusTone(status) {
             <span>{{ ctx.modDatabase.error }}</span>
             <button type="button" @click="ctx.refreshModDatabaseList">重试</button>
           </div>
-          <table v-else :class="{ 'bulk-mode-table': ctx.modBulkMode }">
-            <thead>
-              <tr>
-                <th v-if="ctx.modBulkMode" class="select-column">
-                  <label class="select-all-cell">
-                    <input
-                      type="checkbox"
-                      :checked="ctx.allVisibleModsSelected"
-                      :indeterminate.prop="ctx.someVisibleModsSelected"
-                      aria-label="全选当前加载的模组"
-                      @change="ctx.toggleAllVisibleMods"
-                    >
-                    <span>全选</span>
-                  </label>
-                </th>
-                <th>状态</th>
-                <th>名称</th>
-                <th>作者</th>
-                <th>版本</th>
-                <th>物品数</th>
-                <th>包标识 / GUID</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="row in ctx.modRows"
-                :key="row.id"
-                :class="{ 'selected-row': ctx.selectedMod?.id === row.id, 'bulk-selected-row': ctx.selectedModIds.has(Number(row.id)) }"
-                @click="ctx.handleModRowClick(row)"
-                @contextmenu.prevent="ctx.openModContextMenu(row, $event)"
-              >
-                <td v-if="ctx.modBulkMode" class="select-column">
-                  <input
-                    type="checkbox"
-                    :checked="ctx.selectedModIds.has(Number(row.id))"
-                    :aria-label="`选择 ${row.name}`"
-                    @click.stop
-                    @change="ctx.toggleModSelection(row)"
+          <div v-else class="mod-table-shell">
+            <div class="mod-table-header">
+              <table :class="{ 'bulk-mode-table': ctx.modBulkMode }">
+                <thead>
+                  <tr>
+                    <th v-if="ctx.modBulkMode" class="select-column">
+                      <label class="select-all-cell">
+                        <input
+                          type="checkbox"
+                          :checked="ctx.allVisibleModsSelected"
+                          :indeterminate.prop="ctx.someVisibleModsSelected"
+                          aria-label="全选当前加载的模组"
+                          @change="ctx.toggleAllVisibleMods"
+                        >
+                        <span>全选</span>
+                      </label>
+                    </th>
+                    <th class="mod-status-column">状态</th>
+                    <th class="mod-name-column">名称</th>
+                    <th class="mod-author-column">作者</th>
+                    <th class="mod-version-column">版本</th>
+                    <th class="mod-item-count-column">物品数</th>
+                    <th class="mod-guid-column">包标识 / GUID</th>
+                  </tr>
+                </thead>
+              </table>
+            </div>
+            <div ref="modTableBody" class="mod-table-body" @scroll="handleModTableScroll">
+              <table :class="{ 'bulk-mode-table': ctx.modBulkMode }">
+                <tbody>
+                  <tr
+                    v-for="row in ctx.modRows"
+                    :key="row.id"
+                    :class="{ 'selected-row': ctx.selectedMod?.id === row.id, 'bulk-selected-row': ctx.selectedModIds.has(Number(row.id)) }"
+                    @click="ctx.handleModRowClick(row)"
+                    @contextmenu.prevent="ctx.openModContextMenu(row, $event)"
                   >
-                </td>
-                <td><span class="badge" :class="ctx.badgeClass(row.status)">{{ row.status }}</span></td>
-                <td><span class="text-ellipsis">{{ row.name }}</span></td>
-                <td>{{ row.author }}</td>
-                <td>{{ row.version }}</td>
-                <td>{{ row.itemCount }}</td>
-                <td><span class="text-ellipsis mono">{{ row.guid }}</span></td>
-              </tr>
-            </tbody>
-          </table>
-          <div v-if="ctx.libraryMode === 'mods' && ctx.modDatabase.exists" class="table-load-more">
-            <span v-if="ctx.modDatabase.loadingMore">继续加载中...</span>
-            <span v-else-if="ctx.modDatabase.hasMore">已加载 {{ ctx.modRows.length.toLocaleString() }} / {{ ctx.modDatabase.filteredTotal.toLocaleString() }}</span>
-            <span v-else>已加载全部 {{ ctx.modRows.length.toLocaleString() }} 个对象</span>
+                    <td v-if="ctx.modBulkMode" class="select-column">
+                      <input
+                        type="checkbox"
+                        :checked="ctx.selectedModIds.has(Number(row.id))"
+                        :aria-label="`选择 ${row.name}`"
+                        @click.stop
+                        @change="ctx.toggleModSelection(row)"
+                      >
+                    </td>
+                    <td class="mod-status-column"><span class="badge" :class="ctx.badgeClass(row.status)">{{ row.status }}</span></td>
+                    <td class="mod-name-column"><span class="text-ellipsis">{{ row.name }}</span></td>
+                    <td class="mod-author-column">{{ row.author }}</td>
+                    <td class="mod-version-column">{{ row.version }}</td>
+                    <td class="mod-item-count-column">{{ row.itemCount }}</td>
+                    <td class="mod-guid-column"><span class="text-ellipsis mono">{{ row.guid }}</span></td>
+                  </tr>
+                </tbody>
+              </table>
+              <div v-if="ctx.libraryMode === 'mods' && ctx.modDatabase.exists" class="table-load-more">
+                <span v-if="ctx.modDatabase.loadingMore">继续加载中...</span>
+                <span v-else-if="ctx.modDatabase.hasMore">已加载 {{ ctx.modRows.length.toLocaleString() }} / {{ ctx.modDatabase.filteredTotal.toLocaleString() }}</span>
+                <span v-else>已加载全部 {{ ctx.modRows.length.toLocaleString() }} 个对象</span>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -655,6 +750,19 @@ function modStatusTone(status) {
                           </strong>
                           <span class="assembly-item-name">{{ ctx.gameCurrentItemName(item) }}</span>
                         </div>
+                        <button
+                          v-if="['clothes', 'accessories'].includes(group.key) && Number(item.localSlot || 0) !== 0"
+                          class="assembly-slot-clear"
+                          type="button"
+                          :disabled="ctx.itemGameApply.busy"
+                          :aria-label="group.key === 'accessories' ? '移除当前配饰' : '清除当前服装栏位'"
+                          :title="group.key === 'accessories' ? '移除当前配饰' : '清除当前服装栏位'"
+                          @click.stop="group.key === 'accessories' ? ctx.clearAssemblyAccessorySlot(item) : ctx.clearAssemblyClothingSlot(item)"
+                        >
+                          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                            <path d="M3.25 3.25 12.75 12.75M12.75 3.25 3.25 12.75" />
+                          </svg>
+                        </button>
                       </article>
                     </div>
                     <div v-else class="assembly-group-empty">游戏未返回该组栏位。</div>
@@ -830,11 +938,12 @@ function modStatusTone(status) {
                 <span class="badge">{{ ctx.selectedMod.author }}</span>
                 <span class="badge">v{{ ctx.selectedMod.version }}</span>
                 <span class="badge ok">{{ ctx.selectedMod.itemCount }} items</span>
+                <span class="badge neutral">{{ ctx.formatBytes(ctx.selectedMod.raw.file_size) }}</span>
               </div>
             </div>
             <div class="tabs mod-detail-tabs" aria-label="模组详情视图">
               <button :class="{ active: ctx.modTab === '详情' }" type="button" @click="ctx.setModTab('详情')">详情</button>
-              <button :class="{ active: ctx.modTab === '物品' }" type="button" @click="ctx.setModTab('物品')">物品</button>
+              <button :class="{ active: ctx.modTab === '物品' }" type="button" @click="ctx.setModTab('物品')">关联</button>
               <button :class="{ active: ctx.modTab === '诊断' }" type="button" @click="ctx.setModTab('诊断')">诊断</button>
             </div>
             <div v-if="ctx.modTab === '详情'" class="drawer-tab-panel active">
@@ -842,6 +951,7 @@ function modStatusTone(status) {
                 <span class="drawer-section-title">基础信息</span>
                 <div class="kv mod-kv"><span>数据库 ID</span><strong>{{ ctx.selectedMod.id }}</strong></div>
                 <div class="kv mod-kv"><span>包标识</span><strong>{{ ctx.selectedMod.guid }}</strong></div>
+                <div class="kv mod-kv"><span>模组大小</span><strong>{{ ctx.formatBytes(ctx.selectedMod.raw.file_size) }}</strong></div>
                 <div class="kv mod-kv"><span>最近扫描</span><strong>{{ ctx.selectedMod.raw.last_scanned_at || "-" }}</strong></div>
               </div>
               <div class="drawer-section mod-detail-section">
@@ -867,7 +977,7 @@ function modStatusTone(status) {
             </div>
             <div v-else-if="ctx.modTab === '物品'" class="drawer-tab-panel active">
               <div class="drawer-section mod-detail-section">
-                <span class="drawer-section-title">关联物品</span>
+                <span class="drawer-section-title">物品</span>
                 <div v-if="ctx.selectedModItemsLoading" class="detail-inline-state">正在加载关联物品...</div>
                 <div v-else-if="ctx.selectedModItemsError" class="detail-inline-state">{{ ctx.selectedModItemsError }}</div>
                 <div v-else-if="ctx.selectedModItems.length === 0" class="detail-inline-state">暂无关联物品</div>
@@ -894,9 +1004,14 @@ function modStatusTone(status) {
               </div>
               <div class="drawer-section mod-detail-section">
                 <span class="drawer-section-title">异常详情</span>
+                <div v-if="ctx.unity3dRepairResult" class="detail-inline-state repair-result-state">
+                  压缩前 {{ ctx.formatBytes(ctx.unity3dRepairResult.size_before) }}，压缩后 {{ ctx.formatBytes(ctx.unity3dRepairResult.size_after) }}；
+                  {{ ctx.unity3dRepairResult.size_delta <= 0 ? "减少" : "增加" }} {{ ctx.formatByteChange(ctx.unity3dRepairResult.size_delta) }}
+                  （{{ Math.abs(Number(ctx.unity3dRepairResult.size_change_percent || 0)).toFixed(1) }}%）
+                </div>
                 <div v-if="ctx.selectedModDiagnosticsLoading" class="detail-inline-state">正在读取诊断...</div>
                 <div v-else-if="ctx.selectedModDiagnosticsError" class="detail-inline-state">{{ ctx.selectedModDiagnosticsError }}</div>
-                <div v-else-if="!ctx.selectedModDiagnostics || ctx.selectedModDiagnosticGroups.length === 0" class="detail-inline-state">未发现异常</div>
+                <div v-else-if="!ctx.selectedModDiagnostics || ctx.selectedModDiagnosticGroups.length === 0" class="detail-inline-state diagnostic-empty-state">未发现异常</div>
                 <div v-else class="diagnostic-list">
                   <article v-for="issue in ctx.selectedModDiagnosticGroups" :key="issue.type + ':' + issue.path" class="diagnostic-card">
                     <div class="diagnostic-card-head">
@@ -961,6 +1076,15 @@ function modStatusTone(status) {
                       @click="ctx.repairUnity3dIssue(issue)"
                     >
                       {{ ctx.repairingUnity3dPath === issue.path ? "正在补入..." : issue.repair_action === 'copy_from_other_zipmod' ? "复制补入 zipmod" : "剪切补入 zipmod" }}
+                    </button>
+                    <button
+                      v-if="issue.repair_action === 'repack_unity3d_lzma'"
+                      type="button"
+                      class="diagnostic-action"
+                      :disabled="ctx.repairingUnity3dPath === issue.path"
+                      @click="ctx.repairUnity3dIssue(issue)"
+                    >
+                      {{ ctx.repairingUnity3dPath === issue.path ? "正在重压缩..." : "重压缩" }}
                     </button>
                   </article>
                 </div>

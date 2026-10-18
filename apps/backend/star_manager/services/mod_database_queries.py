@@ -464,6 +464,7 @@ def database_status(
         "exists": exists,
         "database_path": str(resolved),
         "zipmod_count": 0,
+        "zipmod_total_bytes": 0,
         "item_count": 0,
         "zipmod_error_count": 0,
         "zipmod_warning_count": 0,
@@ -483,6 +484,15 @@ def database_status(
     try:
         result["zipmod_count"] = int(
             conn.execute("SELECT COUNT(*) FROM zipmods WHERE scan_status != 'stale'").fetchone()[0]
+        )
+        result["zipmod_total_bytes"] = int(
+            conn.execute(
+                """
+                SELECT COALESCE(SUM(file_size), 0)
+                FROM zipmods
+                WHERE scan_status != 'stale'
+                """
+            ).fetchone()[0]
         )
         result["item_count"] = int(
             conn.execute(
@@ -537,6 +547,11 @@ def database_status(
                       OR COALESCE(unity3d_not_in_mod_count, 0) > 0
                       OR COALESCE(unity3d_in_game_count, 0) > 0
                       OR COALESCE(unity3d_other_mod_count, 0) > 0
+                      OR (
+                          COALESCE(unity3d_uncompressed_count, 0) > 0
+                          AND COALESCE(item_count, 0) > 0
+                          AND CAST(COALESCE(file_size, 0) AS REAL) / item_count > 10485760
+                      )
                       OR EXISTS (
                           SELECT 1
                           FROM duplicate_zipmods d
@@ -682,6 +697,47 @@ def list_zipmod_authors(db_path: Path = DEFAULT_DB_PATH) -> dict:
         conn.close()
 
 
+def list_zipmod_unity3d_dependencies(
+    zipmod_id: int,
+    db_path: Path = DEFAULT_DB_PATH,
+) -> dict:
+    """Return per-file Unity3D dependency status without exposing paths."""
+
+    resolved = db_path.resolve()
+    if not resolved.exists() or not resolved.is_file():
+        return {"ok": False, "error": "Database not found", "dependencies": []}
+
+    conn = sqlite3.connect(resolved)
+    conn.row_factory = sqlite3.Row
+    try:
+        init_db(conn)
+        rows = []
+        for row in conn.execute(
+            """
+            SELECT resource_path, compression, read_status
+            FROM zipmod_unity3d_dependencies
+            WHERE zipmod_id = ?
+            ORDER BY resource_path COLLATE NOCASE
+            """,
+            (int(zipmod_id),),
+        ):
+            resource_path = normalize_zip_path(str(row["resource_path"] or ""))
+            raw_status = str(row["read_status"] or "missing")
+            read_status = raw_status if raw_status in {"readable", "unreadable", "missing"} else "unreadable"
+            rows.append(
+                {
+                    "name": Path(resource_path).name or "未知 Unity3D",
+                    "compression": str(row["compression"] or "unknown"),
+                    # Keep missing separate while normalizing unknown legacy
+                    # values to the present-but-unreadable state.
+                    "read_status": read_status,
+                }
+            )
+        return {"ok": True, "dependencies": rows}
+    finally:
+        conn.close()
+
+
 def list_mod_item_filters(
     db_path: Path = DEFAULT_DB_PATH,
     game_dir: Path | str | None = None,
@@ -817,6 +873,11 @@ def list_zipmods(
                 AND COALESCE(unity3d_not_in_mod_count, 0) = 0
                 AND COALESCE(unity3d_in_game_count, 0) = 0
                 AND COALESCE(unity3d_other_mod_count, 0) = 0
+                AND NOT (
+                    COALESCE(unity3d_uncompressed_count, 0) > 0
+                    AND COALESCE(item_count, 0) > 0
+                    AND CAST(COALESCE(file_size, 0) AS REAL) / item_count > 10485760
+                )
                 AND NOT EXISTS (
                     SELECT 1
                     FROM duplicate_zipmods d
@@ -844,6 +905,11 @@ def list_zipmods(
                     OR COALESCE(unity3d_not_in_mod_count, 0) > 0
                     OR COALESCE(unity3d_in_game_count, 0) > 0
                     OR COALESCE(unity3d_other_mod_count, 0) > 0
+                    OR (
+                        COALESCE(unity3d_uncompressed_count, 0) > 0
+                        AND COALESCE(item_count, 0) > 0
+                        AND CAST(COALESCE(file_size, 0) AS REAL) / item_count > 10485760
+                    )
                     OR EXISTS (
                         SELECT 1
                         FROM duplicate_zipmods d
@@ -870,6 +936,11 @@ def list_zipmods(
                     OR COALESCE(unity3d_not_in_mod_count, 0) > 0
                     OR COALESCE(unity3d_in_game_count, 0) > 0
                     OR COALESCE(unity3d_other_mod_count, 0) > 0
+                    OR (
+                        COALESCE(unity3d_uncompressed_count, 0) > 0
+                        AND COALESCE(item_count, 0) > 0
+                        AND CAST(COALESCE(file_size, 0) AS REAL) / item_count > 10485760
+                    )
                     OR EXISTS (
                         SELECT 1
                         FROM duplicate_zipmods d
@@ -923,6 +994,14 @@ def list_zipmods(
             )
         elif status == "unity3d_error":
             where_clauses.append("COALESCE(unity3d_status, '') = 'error'")
+        elif status == "unity3d_uncompressed":
+            where_clauses.append(
+                """
+                COALESCE(unity3d_uncompressed_count, 0) > 0
+                AND COALESCE(item_count, 0) > 0
+                AND CAST(COALESCE(file_size, 0) AS REAL) / item_count > 10485760
+                """
+            )
         elif status == "duplicate_zipmod":
             where_clauses.append(
                 """
@@ -992,8 +1071,15 @@ def list_zipmods(
                 "unity3d_other_mod_count": row["unity3d_other_mod_count"],
                 "unity3d_missing_count": row["unity3d_missing_count"],
                 "unity3d_error": row["unity3d_error"],
+                "unity3d_compression": row["unity3d_compression"],
+                "unity3d_uncompressed_count": row["unity3d_uncompressed_count"],
+                "unity3d_lzma_count": row["unity3d_lzma_count"],
+                "unity3d_lz4_count": row["unity3d_lz4_count"],
+                "unity3d_other_count": row["unity3d_other_count"],
+                "unity3d_unknown_count": row["unity3d_unknown_count"],
                 "guid": row["guid"],
                 "file_name": row["file_name"],
+                "file_size": row["file_size"],
                 "relative_path": row["relative_path"],
                 "file_path": row["file_path"],
                 "last_scanned_at": row["last_scanned_at"],
@@ -1004,8 +1090,10 @@ def list_zipmods(
                 SELECT id, scan_status, name, author, version, item_count,
                        unity3d_status, unity3d_not_in_mod_count, unity3d_in_mod_count,
                        unity3d_in_game_count, unity3d_other_mod_count,
-                       unity3d_missing_count, unity3d_error, guid,
-                       file_name, relative_path, file_path, last_scanned_at, scan_error
+                       unity3d_missing_count, unity3d_error, unity3d_compression,
+                       unity3d_uncompressed_count, unity3d_lzma_count, unity3d_lz4_count,
+                       unity3d_other_count, unity3d_unknown_count, guid,
+                       file_name, file_size, relative_path, file_path, last_scanned_at, scan_error
                        , (
                            SELECT COUNT(*)
                            FROM duplicate_zipmods d
@@ -1338,6 +1426,10 @@ def list_mod_items(
     source: str = "mod",
     game_dir: Path | str | None = None,
     include_total: bool = True,
+    locate_source: str = "",
+    locate_guid: str = "",
+    locate_slot: str = "",
+    locate_local_slot: str = "",
 ) -> dict:
     resolved = db_path.resolve()
     offset = max(0, int(offset))
@@ -1347,6 +1439,10 @@ def list_mod_items(
     author = str(author or "").strip()
     status = str(status or "").strip()
     usage = str(usage or "").strip()
+    locate_source = str(locate_source or "").strip().casefold()
+    locate_guid = str(locate_guid or "").strip().casefold()
+    locate_slot = _normalize_current_item_slot(locate_slot)
+    locate_local_slot = _normalize_current_item_slot(locate_local_slot)
     source = {
         "mod": "mod",
         "mods": "mod",
@@ -1595,6 +1691,76 @@ def list_mod_items(
             queries.append(append_builtin_query())
         union_sql = " UNION ALL ".join(query for query, _ in queries)
         params = [param for _, query_params in queries for param in query_params]
+        locate_info = None
+        locate_requested = locate_source in {"mod", "builtin"} and (
+            (locate_source == "mod" and locate_guid and locate_slot)
+            or (locate_source == "builtin" and locate_local_slot)
+        )
+        if locate_requested:
+            locate_clauses = ["item_sources.source_type = ?"]
+            locate_params: list[int | str] = [*params, locate_source]
+            if kind:
+                locate_clauses.append("TRIM(item_sources.kind) = ?")
+                locate_params.append(kind)
+            if locate_source == "mod":
+                locate_clauses.append("LOWER(TRIM(item_sources.zipmod_guid)) = ?")
+                locate_params.append(locate_guid)
+            candidates = conn.execute(
+                f"""
+                SELECT item_sources.*
+                FROM ({union_sql}) AS item_sources
+                WHERE {' AND '.join(locate_clauses)}
+                """,
+                locate_params,
+            ).fetchall()
+            target = next(
+                (
+                    candidate for candidate in candidates
+                    if _normalize_current_item_slot(candidate["item_id"])
+                    == (locate_slot if locate_source == "mod" else locate_local_slot)
+                ),
+                None,
+            )
+            if target is None:
+                locate_info = {"found": False}
+            else:
+                preceding_count = int(
+                    conn.execute(
+                        f"""
+                        SELECT COUNT(*)
+                        FROM ({union_sql}) AS item_sources
+                        WHERE (
+                            COALESCE(item_sources.name, '') COLLATE NOCASE < ? COLLATE NOCASE
+                            OR (
+                                COALESCE(item_sources.name, '') COLLATE NOCASE = ? COLLATE NOCASE
+                                AND item_sources.source_type < ?
+                            )
+                            OR (
+                                COALESCE(item_sources.name, '') COLLATE NOCASE = ? COLLATE NOCASE
+                                AND item_sources.source_type = ?
+                                AND item_sources.id < ?
+                            )
+                        )
+                        """,
+                        [
+                            *params,
+                            target["name"] or "",
+                            target["name"] or "",
+                            target["source_type"],
+                            target["name"] or "",
+                            target["source_type"],
+                            int(target["id"]),
+                        ],
+                    ).fetchone()[0]
+                )
+                offset = (preceding_count // limit) * limit
+                locate_info = {
+                    "found": True,
+                    "index": preceding_count,
+                    "offset": offset,
+                    "source": target["source_type"],
+                    "id": target["id"],
+                }
         total = None
         if include_total:
             total = int(
@@ -1713,6 +1879,7 @@ def list_mod_items(
             "limit": limit,
             "total": total,
             "has_more": has_more,
+            "locate": locate_info,
             "filters": {
                 "search": search,
                 "kind": kind,

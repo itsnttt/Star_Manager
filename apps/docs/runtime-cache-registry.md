@@ -191,6 +191,8 @@
 
 `App.vue` 只在当前 renderer 会话中保留当前目录已经返回的有效人物卡/服装卡/场景卡文件项、分页位置和目录树。切换目录或刷新会替换对应状态；服装卡有效性和轻量卡片名称由后端的 `clothes_card_index.sqlite` 持久化，前端本身不保存完整解析结果。三类卡片网格分别通过 `VirtualCharacterCardGrid` / `VirtualClothesCardGrid` 只创建视口附近的卡片 DOM，并通过 `LazyThumbnail` 的 IntersectionObserver 只请求视口附近图片；服装卡首批分页最多保留 96 条。
 
+人物卡库模式在进入范围或刷新时将无标签全库轻量行存入现有 `cards` 状态；标签、收藏和缺失状态筛选只用前端 computed，不重发列表请求，也不丢弃未匹配行。切换到当前目录、游戏目录变化或刷新仍替换列表，外部文件改动需要刷新；这不是跨目录持久化缓存，重启 renderer 后消失。首次全库请求和新可见图片的预览加载成本仍存在。
+
 ### 3.3 卡片浏览滚动位置
 
 - 位置是 `App.vue` 的 renderer 进程内状态，按 `character`、`clothes` 和 `scene` 分别保存人物卡、服装卡、场景卡浏览器的垂直 `scrollTop`；没有存储键，也不写入 `localStorage`。对应列表数组、分页偏移和加载标记同样只保留在当前 renderer 会话中。
@@ -267,9 +269,11 @@ Electron 还可能在默认 user data 目录维护 `Cache`、`Code Cache`、`GPU
 | 路径/模式 | 用途 | 当前行为和清理边界 |
 | --- | --- | --- |
 | `<runtime>/thumbnail_uploads/preview-*.png` | HTTP 图片上传的短暂落盘文件 | 请求结束后在 `finally` 中删除；进程异常退出可能遗留，确认没有上传任务后可清理 |
-| `<runtime>/thumbnail_profile.log` | 当前缩略图建库的性能记录 | 诊断日志，不参与缓存命中；没有通用轮转策略 |
-| `<runtime>/thumbnail_profile_<时间>_<run>.jsonl` | 每次缩略图建库的详细 profiling | 诊断日志，不是缩略图数据；可按日志保留策略清理 |
+| `<runtime>/thumbnail_profile.log` | 未进入数据库建库 profiling 会话时的缩略图性能记录 | 诊断日志，不参与缓存命中；没有通用轮转策略 |
+| `<runtime>/thumbnail_profile.jsonl` | 最近一次数据库建库的详细缩略图 profiling | 每次建库开始时覆盖；诊断日志，不是缩略图数据，记录含 run ID |
 | `<runtime>` 下的手工分析/解密/测试目录 | 脚本或人工操作产生的分析结果 | 当前维护应用没有统一目录管理，不能仅凭目录名推断为应用缓存 |
+
+详细缩略图 profiling 使用固定的 `thumbnail_profile.jsonl`，避免每次增量或全量建库都留下一个新的带时间戳文件。建库开始时会截断并重写该文件，随后逐条追加本轮缩略图查找/提取结果；`build_start`、各条记录和 `build_end` 通过 run ID 关联。它只保留最近一次运行，旧版带时间戳的 JSONL 不会被自动迁移或删除。
 
 代码内部还会创建系统临时目录、`.tmp` 文件和同目录替换文件，用于 Unity3D 解码、CSV/zipmod 原子写入和设置保存。这些是单次操作的安全写入中间物，不是长期缓存；不要把用户的 `.bak` 备份当作缓存自动删除。
 

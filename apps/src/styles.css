@@ -509,7 +509,7 @@ small {
 }
 
 .main.item-library-main {
-  grid-template-rows: 96px minmax(0, 1fr);
+  grid-template-rows: 72px minmax(0, 1fr);
 }
 
 .main.overview-main {
@@ -595,7 +595,7 @@ small {
   grid-template-rows: max-content max-content;
   align-content: center;
   justify-items: start;
-  gap: 6px;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -603,7 +603,7 @@ small {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   width: var(--topbar-kind-control-width);
-  height: 38px;
+  height: 32px;
   box-sizing: border-box;
   overflow: hidden;
   padding: 2px;
@@ -623,9 +623,9 @@ small {
   gap: 5px;
   min-width: 0;
   width: 100%;
-  height: 32px;
-  min-height: 32px;
-  padding: 0 8px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 2px;
   border: 0;
   border-radius: 4px;
   background: transparent;
@@ -633,6 +633,7 @@ small {
   color: var(--muted);
   font-size: 11px;
   font-weight: 850;
+  white-space: nowrap;
   transition: background-color .2s ease, box-shadow .2s ease, color .2s ease;
 }
 
@@ -654,7 +655,7 @@ small {
 
 .topbar-kind-clear {
   width: var(--topbar-kind-control-width);
-  height: 38px;
+  height: 32px;
   margin-top: 0;
   padding: 0 7px;
   border: 1px solid rgba(148, 164, 177, .4);
@@ -711,7 +712,7 @@ small {
 
 .topbar-kind-group {
   min-width: 0;
-  padding: 5px 0 6px;
+  padding: 3px 0 4px;
   border: 0;
   border-radius: 10px;
   background: transparent;
@@ -759,7 +760,7 @@ small {
 
 .topbar-kind-group-title {
   width: 100%;
-  height: 25px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -778,8 +779,8 @@ small {
 .topbar-kind-category-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  padding-top: 5px;
+  gap: 6px;
+  padding-top: 3px;
 }
 
 .topbar-kind-group-common .topbar-kind-category-row,
@@ -796,7 +797,7 @@ small {
 .topbar-kind-child,
 .topbar-kind-back {
   min-width: 0;
-  height: 27px;
+  height: 24px;
   padding: 0 4px;
   overflow: hidden;
   border: 1px solid transparent;
@@ -830,8 +831,8 @@ small {
   gap: 10px;
   min-width: 0;
   width: 100%;
-  min-height: 62px;
-  padding: 6px 8px;
+  min-height: 56px;
+  padding: 4px 8px;
   border: 0;
   border-radius: 10px;
   background: transparent;
@@ -905,7 +906,7 @@ small {
 .topbar-kind-child {
   width: max-content;
   max-width: 150px;
-  height: 32px;
+  height: 28px;
   padding: 0 10px;
   display: inline-flex;
   align-items: center;
@@ -1209,6 +1210,11 @@ small {
 
 .character-library-main .workspace {
   padding-top: 0;
+}
+
+/* 物品浏览顶部分类栏下方只保留 8px 工作区间距，减少顶部空白。 */
+.main.item-library-main .workspace {
+  padding-top: 8px;
 }
 
 .view {
@@ -2856,6 +2862,28 @@ button.wallpaper-setting-help:hover,
   border-bottom: 0;
 }
 
+/* 总览四个一级区块标题使用厚重的汉仪旗黑，并保留黑色填充与白色字体色。 */
+.overview-grid > .overview-stack > .panel > .module-head h1,
+.overview-grid > .overview-stack > .panel > .module-head h2 {
+  --overview-heading-outline: #ffffff;
+  --overview-heading-fill: #171717;
+  font-family: "HYQiHei 80S", "HYQiHei-80S", "汉仪旗黑 80S", "HYQiHei 60S", "HYQiHei-60S", "汉仪旗黑 60S", "Microsoft YaHei", "SimHei", sans-serif;
+  color: var(--overview-heading-outline);
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: .06em;
+  line-height: 1.25;
+  text-shadow:
+    1px 0 0 var(--overview-heading-fill),
+    -1px 0 0 var(--overview-heading-fill),
+    0 1px 0 var(--overview-heading-fill),
+    0 -1px 0 var(--overview-heading-fill),
+    1px 1px 0 var(--overview-heading-fill),
+    -1px 1px 0 var(--overview-heading-fill),
+    1px -1px 0 var(--overview-heading-fill),
+    -1px -1px 0 var(--overview-heading-fill);
+}
+
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -3174,6 +3202,28 @@ button.wallpaper-setting-help:hover,
   outline-offset: 2px;
 }
 
+/* 最近任务保留玻璃背景和状态反馈，不显示外层高亮描边。 */
+.overview-grid .task-item,
+.overview-grid .task-item:hover {
+  border-color: transparent;
+  box-shadow: 0 6px 16px rgba(94, 111, 128, .08);
+}
+
+.overview-grid .task-item:hover {
+  box-shadow: 0 8px 20px rgba(94, 111, 128, .12);
+}
+
+/* 导入外部模组保留玻璃背景，不显示外层高亮描边。 */
+.overview-grid .action-item--import,
+.overview-grid .action-item--import:hover:not(:disabled) {
+  border-color: transparent;
+  box-shadow: 0 6px 16px rgba(94, 111, 128, .08);
+}
+
+.overview-grid .action-item--import:hover:not(:disabled) {
+  box-shadow: 0 8px 20px rgba(94, 111, 128, .12);
+}
+
 .overview-grid .task-item:hover .task-item-chevron,
 .overview-grid .task-item:focus-visible .task-item-chevron {
   opacity: 1;
@@ -3192,6 +3242,20 @@ button.wallpaper-setting-help:hover,
     inset 0 1px 0 rgba(255, 255, 255, .72),
     0 0 14px rgba(255, 224, 137, .28),
     0 8px 20px rgba(159, 126, 46, .12);
+}
+
+/* 一键整理和人物卡清理保留语义背景，不显示外层高亮描边。 */
+.overview-grid .action-item--organize,
+.overview-grid .action-item--organize:hover:not(:disabled),
+.overview-grid .action-item--card-cleanup,
+.overview-grid .action-item--card-cleanup:hover:not(:disabled) {
+  border-color: transparent;
+  box-shadow: 0 6px 16px rgba(94, 111, 128, .08);
+}
+
+.overview-grid .action-item--organize:hover:not(:disabled),
+.overview-grid .action-item--card-cleanup:hover:not(:disabled) {
+  box-shadow: 0 8px 20px rgba(94, 111, 128, .12);
 }
 
 .character-layout,
@@ -3768,6 +3832,37 @@ button.wallpaper-setting-help:hover,
   background: #d7eff5;
 }
 
+.scene-character-export-notice {
+  min-height: 0;
+  margin-top: 10px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.scene-character-export-notice.success {
+  color: #176b4d;
+}
+
+.scene-character-export-notice.error {
+  color: #a12b2b;
+}
+
+.scene-character-export-notice button {
+  flex: 0 0 auto;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  padding: 2px 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
 .clothes-detail-empty {
   display: grid;
   min-height: 150px;
@@ -3850,13 +3945,24 @@ button.wallpaper-setting-help:hover,
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   border: 0;
+  container: character-browser / inline-size;
 }
 
 .character-layout .browser-panel > .toolbar {
   position: relative;
   z-index: 10;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "status filters";
+  align-items: center;
+  flex-wrap: nowrap;
   overflow: visible;
+}
+
+.character-layout .browser-panel > .toolbar.card-bulk-mode {
+  grid-template-areas:
+    "status filters"
+    "bulk bulk";
 }
 
 .character-layout .browser-panel > .module-head,
@@ -3868,22 +3974,105 @@ button.wallpaper-setting-help:hover,
   box-shadow: none;
 }
 
+.character-layout .browser-panel > .module-head {
+  min-height: 44px;
+  padding: 5px 16px;
+}
+
+.character-layout .browser-panel > .toolbar {
+  min-height: 46px;
+  padding: 3px 14px;
+}
+
 .character-browser-head-actions {
   display: flex;
   align-items: center;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: space-between;
   gap: 10px;
+}
+
+.character-layout .browser-panel > .module-head .card-tag-scope-switch {
+  grid-template-columns: repeat(2, minmax(62px, 1fr));
+  padding: 2px;
+  border-radius: 8px;
+}
+
+.character-layout .browser-panel > .module-head .card-tag-scope-switch::before {
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc(50% - 2px);
+}
+
+.character-layout .browser-panel > .module-head .card-tag-scope-switch button {
+  min-height: 26px;
+  padding: 2px 8px;
+  border-radius: 5px;
+  font-size: 10px;
+}
+
+.character-layout .browser-panel > .module-head .card-browser-refresh-button {
+  width: 34px;
+  height: 34px;
+  flex-basis: 34px;
+  border-radius: 9px;
+}
+
+.character-layout .browser-panel > .module-head .card-browser-refresh-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.character-layout .browser-panel > .module-head .card-browser-refresh-button,
+.character-layout .browser-panel > .module-head .card-browser-refresh-button:hover:not(:disabled),
+.character-layout .browser-panel > .module-head .card-browser-refresh-button:focus-visible {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.character-layout .browser-panel,
+.character-layout .browser-panel button,
+.character-layout .browser-panel input,
+.character-layout .browser-panel select,
+.character-layout .browser-panel .mono {
+  font-family: var(--font);
 }
 
 .character-layout .browser-panel > .toolbar .toolbar-right {
   flex-wrap: wrap;
   justify-content: flex-end;
+  grid-area: filters;
 }
 
 .character-layout .browser-panel > .toolbar .toolbar-left {
-  flex: 0 1 auto;
+  grid-area: status;
+  justify-self: start;
   flex-wrap: nowrap;
   max-width: 100%;
+}
+
+.character-bulk-toolbar {
+  grid-area: bulk;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  min-height: 48px;
+  margin-top: 2px;
+  padding: 5px 8px;
+  border: 1px solid var(--glass-border);
+  border-radius: 7px;
+  background: var(--glass-background-fallback);
+  background: var(--glass-background);
+  box-shadow: var(--glass-shadow);
+  -webkit-backdrop-filter: blur(8px) saturate(1.04);
+  backdrop-filter: blur(8px) saturate(1.04);
+}
+
+.character-bulk-toolbar .card-select-all {
+  padding-left: 4px;
 }
 
 .card-bulk-toolbar-actions {
@@ -3904,7 +4093,7 @@ button.wallpaper-setting-help:hover,
   height: 19px;
 }
 
-/* 批量工具栏会在窄窗口中与下一行筛选控件相邻，提示统一向上展开，避免被覆盖。 */
+/* Keep action tooltips above the batch band and card grid. */
 .character-layout .browser-panel > .toolbar .card-bulk-toolbar-actions .icon-action[data-tooltip]::before {
   top: auto;
   bottom: calc(100% + 8px);
@@ -3925,30 +4114,30 @@ button.wallpaper-setting-help:hover,
 .card-filter-toolbar-controls {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
 }
 
-@media (max-width: 920px) {
+.character-layout .browser-panel > .toolbar .card-gender-filter {
+  flex: 0 0 100px;
+  width: 100px;
+}
+
+@container character-browser (max-width: 720px) {
   .character-layout .browser-panel > .toolbar {
-    align-items: flex-start;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "status" "filters";
   }
 
-  .character-layout .browser-panel > .toolbar .toolbar-left {
-    flex: 1 1 100%;
-    width: 100%;
-    justify-content: space-between;
+  .character-layout .browser-panel > .toolbar.card-bulk-mode {
+    grid-template-areas: "status" "filters" "bulk";
   }
 
   .character-layout .browser-panel > .toolbar .toolbar-right {
-    flex: 1 1 100%;
     width: 100%;
-    justify-content: flex-start;
-  }
-
-  .card-filter-toolbar-controls {
-    width: 100%;
+    justify-content: flex-end;
   }
 }
 
@@ -3974,16 +4163,16 @@ button.wallpaper-setting-help:hover,
 }
 
 .character-layout .browser-panel > .toolbar .card-dependency-filter {
-  flex: 0 0 180px;
-  width: 180px;
+  flex: 0 0 108px;
+  width: 108px;
 }
 
 .character-layout .browser-panel > .toolbar .card-favorite-filter {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 102px;
-  width: 102px;
+  flex: 0 0 86px;
+  width: 86px;
   min-height: 34px;
   gap: 6px;
   padding: 0 12px;
@@ -4914,6 +5103,10 @@ button.wallpaper-setting-help:hover,
   backdrop-filter: blur(6px);
 }
 
+.character-layout > .character-side-panel .card-detail-related-panel .card-dependency-item.matched .dependency-match-actions {
+  min-width: 58px;
+}
+
 .character-layout > .character-side-panel .card-detail-related-panel .card-dependency-item:hover,
 .character-layout > .character-side-panel .card-detail-related-panel .card-dependency-item:focus-visible {
   border-color: rgba(126, 151, 165, .5);
@@ -4967,10 +5160,12 @@ button.wallpaper-setting-help:hover,
 }
 
 .character-layout > .character-side-panel .card-detail-related-panel .dependency-item-meta small {
+  flex: 1 1 auto;
   color: rgba(82, 88, 98, .72);
 }
 
 .character-layout > .character-side-panel .card-detail-related-panel .dependency-match-state {
+  justify-self: end;
   border-color: rgba(75, 164, 137, .5);
   background: rgba(224, 249, 239, .3);
   color: #08745c;
@@ -5029,9 +5224,9 @@ button.wallpaper-setting-help:hover,
 .card-tag-filter-combobox {
   position: relative;
   z-index: 4;
-  flex: 0 1 190px;
-  width: 190px;
-  min-width: 150px;
+  flex: 0 1 160px;
+  width: 160px;
+  min-width: 130px;
 }
 
 .card-tag-filter-combobox input {
@@ -5275,7 +5470,8 @@ button.wallpaper-setting-help:hover,
 .character-layout .browser-panel > .toolbar .card-bulk-toolbar-actions .icon-action,
 .character-layout .browser-panel > .module-head .card-tag-scope-switch,
 .character-layout .browser-panel > .toolbar .card-tag-filter-combobox input,
-.character-layout .browser-panel > .toolbar .card-dependency-filter {
+.character-layout .browser-panel > .toolbar .card-dependency-filter,
+.character-layout .browser-panel > .toolbar .card-gender-filter {
   border-color: rgba(255, 255, 255, .6);
   background: rgba(255, 255, 255, .2);
   background: color-mix(in srgb, var(--surface-clean) 20%, transparent);
@@ -5307,6 +5503,16 @@ button.wallpaper-setting-help:hover,
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, .7),
     0 2px 8px rgba(126, 55, 82, .14);
+}
+
+.character-layout .browser-panel > .module-head .card-tag-scope-switch {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.character-layout .browser-panel > .module-head .card-tag-scope-switch::before {
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .character-layout .browser-panel > .toolbar .card-tag-bulk-action {
@@ -5356,6 +5562,8 @@ button.wallpaper-setting-help:hover,
 .character-layout .browser-panel > .toolbar .card-bulk-toolbar-actions .icon-action:focus-visible,
 .character-layout .browser-panel > .toolbar .card-dependency-filter:hover:not(:disabled),
 .character-layout .browser-panel > .toolbar .card-dependency-filter:focus-visible,
+.character-layout .browser-panel > .toolbar .card-gender-filter:hover:not(:disabled),
+.character-layout .browser-panel > .toolbar .card-gender-filter:focus-visible,
 .character-layout .browser-panel > .toolbar .card-tag-filter-combobox input:hover,
 .character-layout .browser-panel > .toolbar .card-tag-filter-combobox input:focus {
   border-color: rgba(255, 255, 255, .9);
@@ -5365,6 +5573,236 @@ button.wallpaper-setting-help:hover,
     inset 0 1px 0 rgba(255, 255, 255, .68),
     0 0 12px rgba(255, 255, 255, .2),
     0 2px 8px rgba(73, 91, 109, .1);
+}
+
+.character-layout .browser-panel > .toolbar .bulk-select-button,
+.character-layout .browser-panel > .toolbar .bulk-select-button:hover:not(:disabled),
+.character-layout .browser-panel > .toolbar .bulk-select-button:focus-visible,
+.character-layout .browser-panel > .toolbar .card-favorite-filter,
+.character-layout .browser-panel > .toolbar .card-favorite-filter:hover,
+.character-layout .browser-panel > .toolbar .card-favorite-filter:focus-visible,
+.character-layout .browser-panel > .toolbar .card-favorite-filter.active,
+.character-layout .browser-panel > .toolbar .card-favorite-filter.active:hover,
+.character-layout .browser-panel > .toolbar .card-favorite-filter.active:focus-visible,
+.character-layout .browser-panel > .toolbar .card-gender-filter,
+.character-layout .browser-panel > .toolbar .card-gender-filter:hover:not(:disabled),
+.character-layout .browser-panel > .toolbar .card-gender-filter:focus-visible,
+.character-layout .browser-panel > .toolbar .card-tag-filter-combobox input,
+.character-layout .browser-panel > .toolbar .card-tag-filter-combobox input:hover,
+.character-layout .browser-panel > .toolbar .card-tag-filter-combobox input:focus {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.character-layout .browser-panel > .toolbar .bulk-select-button:focus-visible,
+.character-layout .browser-panel > .toolbar .card-favorite-filter:focus-visible,
+.character-layout .browser-panel > .toolbar .card-gender-filter:focus-visible,
+.character-layout .browser-panel > .toolbar .card-tag-filter-combobox input:focus-visible {
+  outline: 2px solid rgba(82, 151, 180, .58);
+  outline-offset: 2px;
+}
+
+.character-layout .browser-panel > .toolbar .card-gender-filter,
+.character-layout .browser-panel > .toolbar .card-gender-filter:hover,
+.character-layout .browser-panel > .toolbar .card-gender-filter:focus,
+.character-layout .browser-panel > .toolbar .card-gender-filter:focus-visible {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  box-shadow: none;
+  outline: none;
+  background-color: transparent;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 9px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.character-layout .browser-panel > .toolbar .bulk-select-button,
+.character-layout .browser-panel > .toolbar .card-favorite-filter,
+.character-layout .browser-panel > .toolbar .card-tag-filter-combobox input {
+  background: rgba(218, 211, 225, .62);
+  background: color-mix(in srgb, #d8d1df 58%, transparent);
+}
+
+.character-layout .browser-panel > .toolbar .bulk-select-button:hover:not(:disabled),
+.character-layout .browser-panel > .toolbar .card-favorite-filter:hover,
+.character-layout .browser-panel > .toolbar .card-tag-filter-combobox input:hover,
+.character-layout .browser-panel > .toolbar .card-tag-filter-combobox input:focus {
+  background: rgba(218, 211, 225, .62);
+  background: color-mix(in srgb, #d8d1df 58%, transparent);
+}
+
+/* 人物卡浏览器红框控件统一视觉：范围、刷新和筛选控件共用同一套尺寸与玻璃表面。 */
+.character-layout .browser-panel {
+  --character-control-height: 38px;
+  --character-control-radius: 9px;
+  --character-control-border: rgba(255, 255, 255, .72);
+  --character-control-background: rgba(235, 231, 240, .72);
+  --character-control-background-hover: rgba(246, 243, 249, .9);
+  --character-control-color: #4e4a58;
+  --character-control-accent: #8a3555;
+  --character-control-shadow: inset 0 1px 0 rgba(255, 255, 255, .66), 0 1px 7px rgba(73, 91, 109, .08);
+}
+
+.character-layout .browser-panel > .module-head .card-tag-scope-switch,
+.character-layout .browser-panel > .module-head .card-browser-refresh-button,
+.character-layout .browser-panel > .toolbar .bulk-select-button,
+.character-layout .browser-panel > .toolbar .card-favorite-filter,
+.character-layout .browser-panel > .toolbar .card-tag-filter-combobox input,
+.character-layout .browser-panel > .toolbar .card-gender-filter,
+.character-layout .browser-panel > .toolbar .card-dependency-filter {
+  box-sizing: border-box;
+  min-height: var(--character-control-height);
+  height: var(--character-control-height);
+  border: 1px solid var(--character-control-border);
+  border-radius: var(--character-control-radius);
+  background: var(--character-control-background);
+  color: var(--character-control-color);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: var(--character-control-shadow);
+  -webkit-backdrop-filter: blur(8px) saturate(1.05);
+  backdrop-filter: blur(8px) saturate(1.05);
+  transition: background .18s ease, border-color .18s ease, box-shadow .18s ease, color .18s ease;
+}
+
+.character-layout .browser-panel > .module-head .card-tag-scope-switch {
+  padding: 3px;
+  border-color: var(--character-control-border);
+  background: var(--character-control-background);
+  box-shadow: var(--character-control-shadow);
+}
+
+.character-layout .browser-panel > .module-head .card-tag-scope-switch::before {
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  border: 1px solid rgba(255, 255, 255, .84);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .68);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .8), 0 1px 4px rgba(73, 91, 109, .1);
+}
+
+.character-layout .browser-panel > .module-head .card-tag-scope-switch button {
+  min-height: 30px;
+  height: 30px;
+  padding: 2px 10px;
+  border-radius: 6px;
+  color: rgba(78, 74, 88, .78);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 700;
+  text-shadow: none;
+}
+
+.character-layout .browser-panel > .module-head .card-tag-scope-switch button.active {
+  color: var(--character-control-accent);
+  font-weight: 800;
+}
+
+.character-layout .browser-panel > .module-head .card-browser-refresh-button {
+  width: var(--character-control-height);
+  flex: 0 0 var(--character-control-height);
+  padding: 0;
+  border-color: var(--character-control-border);
+  background: var(--character-control-background);
+  color: var(--character-control-color);
+  box-shadow: var(--character-control-shadow);
+}
+
+.character-layout .browser-panel > .module-head .card-browser-refresh-button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.character-layout .browser-panel > .toolbar .bulk-select-button,
+.character-layout .browser-panel > .toolbar .card-favorite-filter {
+  min-width: 86px;
+  padding: 0 12px;
+}
+
+.character-layout .browser-panel > .toolbar .card-tag-filter-combobox input {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 34px 7px 32px;
+}
+
+.character-layout .browser-panel > .toolbar .card-gender-filter,
+.character-layout .browser-panel > .toolbar .card-dependency-filter {
+  padding: 0 30px 0 12px;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.character-layout .browser-panel > .toolbar .card-gender-filter {
+  flex-basis: 100px;
+  width: 100px;
+}
+
+.character-layout .browser-panel > .toolbar .card-dependency-filter {
+  flex-basis: 108px;
+  width: 108px;
+}
+
+.character-layout .browser-panel > .module-head .card-tag-scope-switch:hover,
+.character-layout .browser-panel > .module-head .card-browser-refresh-button:hover:not(:disabled),
+.character-layout .browser-panel > .toolbar .bulk-select-button:hover:not(:disabled),
+.character-layout .browser-panel > .toolbar .card-favorite-filter:hover,
+.character-layout .browser-panel > .toolbar .card-tag-filter-combobox input:hover,
+.character-layout .browser-panel > .toolbar .card-gender-filter:hover:not(:disabled),
+.character-layout .browser-panel > .toolbar .card-dependency-filter:hover:not(:disabled),
+.character-layout .browser-panel > .toolbar .card-tag-filter-combobox input:focus {
+  border-color: rgba(255, 255, 255, .92);
+  /* 只更新颜色，不能用 background 简写清掉 select 的自定义箭头图层。 */
+  background-color: var(--character-control-background-hover);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .82), 0 0 12px rgba(255, 255, 255, .2), 0 2px 8px rgba(73, 91, 109, .1);
+}
+
+/* 旧版 hover 规则使用 background 简写后会清掉背景图；在最终层重新声明箭头，确保 hover/focus 始终可见。 */
+.character-layout .browser-panel > .toolbar .card-gender-filter,
+.character-layout .browser-panel > .toolbar .card-gender-filter:hover:not(:disabled),
+.character-layout .browser-panel > .toolbar .card-gender-filter:focus,
+.character-layout .browser-panel > .toolbar .card-gender-filter:focus-visible,
+.character-layout .browser-panel > .toolbar .card-dependency-filter,
+.character-layout .browser-panel > .toolbar .card-dependency-filter:hover:not(:disabled),
+.character-layout .browser-panel > .toolbar .card-dependency-filter:focus,
+.character-layout .browser-panel > .toolbar .card-dependency-filter:focus-visible {
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.character-layout .browser-panel > .module-head .card-browser-refresh-button:focus-visible,
+.character-layout .browser-panel > .toolbar .bulk-select-button:focus-visible,
+.character-layout .browser-panel > .toolbar .card-favorite-filter:focus-visible,
+.character-layout .browser-panel > .toolbar .card-tag-filter-combobox input:focus-visible,
+.character-layout .browser-panel > .toolbar .card-gender-filter:focus-visible,
+.character-layout .browser-panel > .toolbar .card-dependency-filter:focus-visible {
+  outline: 2px solid rgba(82, 151, 180, .58);
+  outline-offset: 2px;
+}
+
+.character-layout .browser-panel > .toolbar .card-favorite-filter.active {
+  border-color: rgba(194, 148, 43, .64);
+  background: rgba(255, 244, 188, .56);
+  color: #785a0c;
+}
+
+.character-layout .browser-panel > .toolbar .card-favorite-filter.active:hover,
+.character-layout .browser-panel > .toolbar .card-favorite-filter.active:focus-visible {
+  border-color: rgba(194, 148, 43, .82);
+  background: rgba(255, 244, 188, .72);
 }
 
 .character-layout .browser-panel > .toolbar .card-tag-bulk-action:hover:not(:disabled),
@@ -7154,14 +7592,6 @@ button.wallpaper-setting-help:hover,
   white-space: nowrap;
 }
 
-.card-dependency-overview-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  min-width: 0;
-}
-
 .card-dependency-install-all {
   min-height: 28px;
   padding: 4px 9px;
@@ -7340,6 +7770,14 @@ button.wallpaper-setting-help:hover,
   border-bottom: 1px solid #ddd6cf;
   border-radius: 6px 6px 0 0;
   background: var(--dependency-soft);
+}
+
+.dependency-group-head-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
 }
 
 .dependency-group-title {
@@ -7780,7 +8218,7 @@ button.wallpaper-setting-help:hover,
 .mod-summary {
   flex: 1 1 0;
   flex-wrap: nowrap;
-  justify-content: flex-start;
+  justify-content: flex-end;
   min-width: 0;
   margin-left: 0;
 }
@@ -7804,6 +8242,175 @@ button.wallpaper-setting-help:hover,
   border-color: #d64c58;
   background: #ffd7db;
   color: #8f1f29;
+}
+
+/* 物品浏览窄窗口下标题栏只保留控件自身高度，移除标题栏底部多余空白。 */
+.mod-head.item-library-head {
+  min-height: 0;
+  box-shadow: none;
+}
+
+/* 模组浏览标题栏移除页签与筛选工具栏之间的底部分隔线。 */
+.mod-management-layout > .mod-page > .mod-head {
+  min-height: 32px;
+  padding: 0 16px;
+  box-shadow: none;
+}
+
+/* 模组浏览标题栏控件与筛选控件之间保留 8px 垂直间距。 */
+.mod-management-layout > .mod-page > .library-toolbar {
+  padding-top: 8px;
+}
+
+/* 模组浏览页签下移，避免页签贴近标题栏顶部边缘。 */
+.mod-management-layout > .mod-page > .mod-head:not(.item-library-head) .mod-tabs {
+  margin-top: 8px;
+}
+
+/* 模组浏览筛选控件统一收紧尺寸，保持紧凑的顶部工具栏。 */
+.mod-management-layout > .mod-page > .library-toolbar {
+  min-height: 56px;
+  padding-bottom: 8px;
+}
+
+.mod-management-layout > .mod-page > .library-toolbar .filter-grid.mods {
+  min-height: 32px;
+}
+
+.mod-management-layout > .mod-page > .library-toolbar .bulk-select-button,
+.mod-management-layout > .mod-page > .library-toolbar .bulk-select-status {
+  min-height: 32px;
+  height: 32px;
+}
+
+.mod-management-layout > .mod-page > .library-toolbar .bulk-select-button {
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.mod-management-layout > .mod-page > .library-toolbar .bulk-select-status button {
+  height: 26px;
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.mod-management-layout > .mod-page > .library-toolbar .mod-filter-end .author-combobox {
+  width: 200px;
+  flex-basis: 200px;
+}
+
+.mod-management-layout > .mod-page > .library-toolbar .mod-filter-end .mod-status-filter {
+  width: 152px;
+  flex-basis: 152px;
+}
+
+.mod-management-layout > .mod-page > .library-toolbar .mod-filter-end .dependency-usage-filter {
+  width: 120px;
+  flex-basis: 120px;
+  height: 32px;
+}
+
+.mod-management-layout > .mod-page > .library-toolbar .mod-filter-end .author-combobox input,
+.mod-management-layout > .mod-page > .library-toolbar .mod-filter-end .mod-status-filter {
+  height: 32px;
+}
+
+.mod-management-layout > .mod-page > .library-toolbar .mod-filter-end .author-combobox-toggle {
+  width: 32px;
+  font-size: 12px;
+}
+
+/* 模组浏览红框筛选控件统一字号，避免按钮、作者输入和两个下拉框各自继承不同字号。 */
+.mod-management-layout > .mod-page > .library-toolbar:not(.item-library-toolbar) .filter-grid.mods,
+.mod-management-layout > .mod-page > .library-toolbar:not(.item-library-toolbar) .filter-grid.mods .bulk-select-status span,
+.mod-management-layout > .mod-page > .library-toolbar:not(.item-library-toolbar) .mod-filter-end,
+.mod-management-layout > .mod-page > .library-toolbar:not(.item-library-toolbar) .mod-filter-end .author-combobox input,
+.mod-management-layout > .mod-page > .library-toolbar:not(.item-library-toolbar) .mod-filter-end .mod-status-filter,
+.mod-management-layout > .mod-page > .library-toolbar:not(.item-library-toolbar) .mod-filter-end .dependency-usage-filter {
+  font-size: 12px;
+}
+
+/* 物品浏览筛选控件同步收紧尺寸，减少搜索栏占用的高度。 */
+.mod-management-layout > .mod-page > .item-library-toolbar {
+  min-height: 48px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.mod-management-layout > .mod-page > .item-library-toolbar .filter-grid.items {
+  gap: 6px;
+}
+
+.mod-management-layout > .mod-page > .item-library-toolbar .item-search-control {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+}
+
+.mod-management-layout > .mod-page > .item-library-toolbar .item-search-control input {
+  padding-right: 32px;
+}
+
+.mod-management-layout > .mod-page > .item-library-toolbar .item-search-clear {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0 6px 6px 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  transform: none;
+}
+
+.mod-management-layout > .mod-page > .item-library-toolbar .item-search-clear:hover,
+.mod-management-layout > .mod-page > .item-library-toolbar .item-search-clear:focus-visible {
+  background: rgba(218, 241, 255, .45);
+  color: var(--text);
+  outline: none;
+  transform: none;
+}
+
+.mod-management-layout > .mod-page > .item-library-toolbar .item-search-clear:active {
+  transform: none;
+}
+
+.mod-management-layout > .mod-page > .item-library-toolbar .item-search-clear svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.2;
+}
+
+.mod-management-layout > .mod-page > .item-library-toolbar .filter-grid.items input,
+.mod-management-layout > .mod-page > .item-library-toolbar .filter-grid.items select {
+  height: 32px;
+  padding-left: 8px;
+  padding-right: 8px;
+  font-size: 12px;
+}
+
+.mod-management-layout > .mod-page > .item-library-toolbar .filter-grid.items .author-combobox-toggle {
+  width: 32px;
+  font-size: 12px;
+}
+
+.mod-management-layout > .mod-page > .item-library-toolbar > .dependency-usage-filter {
+  width: 112px;
+  min-width: 112px;
+  max-width: 112px;
+  height: 32px;
+  flex-basis: 112px;
+  padding: 0 24px 0 8px;
+  font-size: 12px;
 }
 
 .mod-strip {
@@ -8265,6 +8872,11 @@ button.wallpaper-setting-help:hover,
   background: rgba(245, 242, 239, .58);
 }
 
+/* 模组标题栏统计标签移除外圈边框，保留状态色和玻璃背景。 */
+.mod-management-layout > .mod-page > .mod-head .mod-summary .badge {
+  border: 0;
+}
+
 .mod-page .mod-tabs button {
   border-color: rgba(148, 164, 177, .56);
   background: rgba(255, 255, 255, .28);
@@ -8447,6 +9059,19 @@ button.wallpaper-setting-help:hover,
   color: #5d4608;
 }
 
+.mod-page .bulk-repack-action {
+  border-color: rgba(190, 145, 39, .5);
+  background: rgba(255, 240, 173, .24);
+  color: #72580e;
+}
+
+.mod-page .bulk-repack-action:hover:not(:disabled),
+.mod-page .bulk-repack-action:focus-visible {
+  border-color: rgba(183, 143, 32, .72);
+  background: rgba(255, 240, 173, .48);
+  color: #5d4608;
+}
+
 .mod-page .bulk-delete-action {
   border-color: rgba(181, 73, 73, .46);
   background: rgba(255, 225, 225, .22);
@@ -8471,6 +9096,73 @@ button.wallpaper-setting-help:hover,
   border-color: rgba(73, 139, 161, .54);
   background: rgba(218, 241, 255, .34);
   color: #245c75;
+}
+
+/* 模组批量操作图标按钮移除实体边框，保留玻璃背景和状态反馈。 */
+.mod-page .bulk-icon-button,
+.mod-page .bulk-icon-button:hover:not(:disabled),
+.mod-page .bulk-icon-button:focus-visible,
+.mod-page .bulk-icon-button:disabled,
+.mod-page .bulk-icon-button[aria-busy="true"] {
+  border: 0;
+  box-shadow: 0 2px 8px rgba(59, 77, 91, .05);
+}
+
+.mod-page .bulk-icon-button:hover:not(:disabled),
+.mod-page .bulk-icon-button:focus-visible {
+  box-shadow: 0 4px 11px rgba(59, 77, 91, .09);
+}
+
+.mod-page .bulk-icon-button:disabled {
+  box-shadow: none;
+}
+
+/* 模组批量操作图标按钮进一步收紧尺寸，减少工具栏占用。 */
+.mod-page .bulk-icon-button {
+  width: 40px;
+  min-width: 40px;
+  height: 34px;
+  flex-basis: 40px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+}
+
+.mod-page .bulk-icon-button svg {
+  width: 23px;
+  height: 23px;
+  flex: 0 0 23px;
+  margin: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* 各 SVG 路径的原始横向占用不同，按统一的约 16px 视觉宽度校正左右留白。 */
+.mod-page .bulk-export-action svg {
+  transform: scaleX(1.19);
+}
+
+.mod-page .bulk-repack-action svg {
+  transform: scale(1.08);
+  fill: currentColor;
+  stroke: none;
+}
+
+.mod-page .bulk-duplicate-action svg,
+.mod-page .bulk-delete-action svg {
+  transform: scaleX(1.06);
+}
+
+.mod-page .bulk-author-action svg {
+  transform: scaleX(.93);
+}
+
+/* 批量操作栏容器移除高亮描边，避免空白区域形成额外框线。 */
+.mod-page .bulk-action-bar {
+  border: 0;
+  box-shadow: 0 2px 9px rgba(59, 77, 91, .03);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -8500,26 +9192,65 @@ button.wallpaper-setting-help:hover,
   min-height: 0;
 }
 
-/* Match the native mod-list scrollbars to the translucent application surfaces. */
-.mod-page .table-wrap.mod-list-scrollbar {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(103, 132, 148, .48) rgba(255, 255, 255, .12);
-  scrollbar-gutter: stable;
+/* 列表视图把滚动交给表格正文，让表头独立占据顶部 42px。 */
+.mod-page .table-wrap.item-list-table-mode {
+  overflow: hidden;
 }
 
-.mod-page .table-wrap.mod-list-scrollbar::-webkit-scrollbar {
+/* Match the native mod-list scrollbars to the translucent application surfaces. */
+.mod-page .table-wrap.mod-list-scrollbar {
+  overflow: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(103, 132, 148, .48) rgba(255, 255, 255, .12);
+}
+
+.mod-table-shell {
+  display: grid;
+  grid-template-rows: 42px minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.mod-table-header {
+  min-width: 0;
+  overflow: hidden;
+  background: rgba(247, 251, 255, .16);
+  background: color-mix(in srgb, var(--bg-color) 16%, transparent);
+  -webkit-backdrop-filter: blur(12px) saturate(1.04);
+  backdrop-filter: blur(12px) saturate(1.04);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28);
+}
+
+.mod-table-header > table {
+  font-size: 12px;
+}
+
+.mod-table-body {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(103, 132, 148, .48) rgba(255, 255, 255, .12);
+}
+
+.mod-page .table-wrap.mod-list-scrollbar::-webkit-scrollbar,
+.mod-page .mod-table-body::-webkit-scrollbar {
   width: 12px;
   height: 12px;
 }
 
-.mod-page .table-wrap.mod-list-scrollbar::-webkit-scrollbar-track {
+.mod-page .table-wrap.mod-list-scrollbar::-webkit-scrollbar-track,
+.mod-page .mod-table-body::-webkit-scrollbar-track {
   border: 3px solid transparent;
   border-radius: 999px;
   background: rgba(255, 255, 255, .12);
   background-clip: padding-box;
 }
 
-.mod-page .table-wrap.mod-list-scrollbar::-webkit-scrollbar-thumb {
+.mod-page .table-wrap.mod-list-scrollbar::-webkit-scrollbar-thumb,
+.mod-page .mod-table-body::-webkit-scrollbar-thumb {
   min-height: 34px;
   border: 3px solid transparent;
   border-radius: 999px;
@@ -8527,16 +9258,19 @@ button.wallpaper-setting-help:hover,
   background-clip: padding-box;
 }
 
-.mod-page .table-wrap.mod-list-scrollbar::-webkit-scrollbar-thumb:hover {
+.mod-page .table-wrap.mod-list-scrollbar::-webkit-scrollbar-thumb:hover,
+.mod-page .mod-table-body::-webkit-scrollbar-thumb:hover {
   background: rgba(82, 119, 138, .68);
   background-clip: padding-box;
 }
 
-.mod-page .table-wrap.mod-list-scrollbar::-webkit-scrollbar-corner {
+.mod-page .table-wrap.mod-list-scrollbar::-webkit-scrollbar-corner,
+.mod-page .mod-table-body::-webkit-scrollbar-corner {
   background: transparent;
 }
 
-.mod-page .table-wrap.mod-list-scrollbar::-webkit-scrollbar-button {
+.mod-page .table-wrap.mod-list-scrollbar::-webkit-scrollbar-button,
+.mod-page .mod-table-body::-webkit-scrollbar-button {
   display: none;
 }
 
@@ -8560,9 +9294,13 @@ button.wallpaper-setting-help:hover,
 .compact-item-name { display: block; overflow: hidden; margin-top: 5px; font-size: 10px; font-weight: 800; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
 
 .item-table-virtual-canvas {
+  display: grid;
+  grid-template-rows: 42px minmax(0, 1fr);
   position: relative;
   width: 100%;
+  height: 100%;
   min-height: 42px;
+  overflow: hidden;
   overflow-anchor: none;
   font-size: 13px;
 }
@@ -8575,15 +9313,29 @@ button.wallpaper-setting-help:hover,
 }
 
 .item-table-virtual-header {
-  position: sticky;
+  position: relative;
   z-index: 3;
-  top: 0;
   height: 42px;
   align-items: center;
   border-bottom: 1px solid var(--line);
   background: #f4faff;
   color: var(--muted);
   font-size: 12px;
+}
+
+.item-table-virtual-viewport {
+  position: relative;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(103, 132, 148, .48) rgba(255, 255, 255, .12);
+}
+
+.item-table-virtual-scroll-canvas {
+  position: relative;
+  width: 100%;
+  min-height: 0;
+  overflow-anchor: none;
 }
 
 .item-table-virtual-header > span,
@@ -8602,6 +9354,39 @@ button.wallpaper-setting-help:hover,
   grid-auto-rows: 60px;
   contain: layout paint style;
   will-change: transform;
+}
+
+.mod-page .item-table-virtual-viewport::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.mod-page .item-table-virtual-viewport::-webkit-scrollbar-track {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .12);
+  background-clip: padding-box;
+}
+
+.mod-page .item-table-virtual-viewport::-webkit-scrollbar-thumb {
+  min-height: 34px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(103, 132, 148, .46);
+  background-clip: padding-box;
+}
+
+.mod-page .item-table-virtual-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(82, 119, 138, .68);
+  background-clip: padding-box;
+}
+
+.mod-page .item-table-virtual-viewport::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.mod-page .item-table-virtual-viewport::-webkit-scrollbar-button {
+  display: none;
 }
 
 .item-table-virtual-row {
@@ -8636,6 +9421,14 @@ button.wallpaper-setting-help:hover,
 
 .item-table-virtual-cell > .item-source-cell {
   width: 100%;
+}
+
+.item-table-virtual-cell > .badge {
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 5px;
+  font-size: 12px;
 }
 
 .item-source-cell { display: flex; min-width: 0; align-items: center; gap: 5px; }
@@ -9342,7 +10135,7 @@ button.assembly-group-head:focus-visible {
 
 .assembly-slot-row {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-columns: 38px minmax(0, 1fr) 24px;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -9424,6 +10217,47 @@ button.assembly-group-head:focus-visible {
   display: grid;
   gap: 2px;
   min-width: 0;
+}
+
+.assembly-slot-clear {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: #6d8587;
+  background: transparent;
+  cursor: pointer;
+  transition: color .16s ease, border-color .16s ease, background .16s ease, box-shadow .16s ease;
+}
+
+.assembly-slot-clear svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-width: 1.8;
+}
+
+.assembly-slot-clear:hover,
+.assembly-slot-clear:focus-visible {
+  border-color: #c46b6b;
+  color: #a8333d;
+  background: rgb(255 236 236 / 78%);
+  box-shadow: 0 2px 6px rgb(168 51 61 / 12%);
+}
+
+.assembly-slot-clear:focus-visible {
+  outline: 2px solid rgb(168 51 61 / 32%);
+  outline-offset: 1px;
+}
+
+.assembly-slot-clear:disabled {
+  cursor: wait;
+  opacity: .52;
 }
 
 .assembly-slot-copy > strong {
@@ -9534,6 +10368,15 @@ button.assembly-group-head:focus-visible {
 @container mod-page (max-width: 920px) {
   .mod-head {
     padding: 10px 12px;
+  }
+
+  .mod-head.item-library-head {
+    padding-block: 0;
+  }
+
+  .mod-head.item-library-head .mod-tabs,
+  .mod-head.item-library-head .assembly-mode-toggle {
+    margin-top: 6px;
   }
 
   .mod-head .mod-tabs {
@@ -9672,9 +10515,8 @@ button.assembly-group-head:focus-visible {
   max-width: 100%;
   font-size: 18px;
   line-height: 1.18;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .item-drawer-hero .library-summary {
@@ -10073,6 +10915,43 @@ button.assembly-group-head:focus-visible {
 .character-layout > .character-side-panel .card-detail-tabs button:focus-visible {
   outline: 2px solid rgba(64, 146, 177, .72);
   outline-offset: 1px;
+}
+
+/* 人物卡详情页签复用模组详情的轻量胶囊导航，仅突出当前页签。 */
+.character-layout > .character-side-panel .card-detail-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0;
+  border-bottom: 0;
+}
+
+.character-layout > .character-side-panel .card-detail-tabs button,
+.character-layout > .character-side-panel .card-detail-tabs button:hover,
+.character-layout > .character-side-panel .card-detail-tabs button:focus-visible,
+.character-layout > .character-side-panel .card-detail-tabs button.active {
+  min-width: 72px;
+  height: 34px;
+  min-height: 34px;
+  border: 0 !important;
+  border-radius: 8px;
+  background: transparent !important;
+  box-shadow: none;
+  color: rgba(73, 80, 91, .78);
+  outline: none;
+}
+
+.character-layout > .character-side-panel .card-detail-tabs button:hover,
+.character-layout > .character-side-panel .card-detail-tabs button:focus-visible {
+  background: rgba(255, 255, 255, .28) !important;
+  color: var(--text);
+}
+
+.character-layout > .character-side-panel .card-detail-tabs button.active {
+  background: rgba(255, 255, 255, .58) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .84), 0 4px 12px rgba(69, 87, 101, .1);
+  color: #087765;
 }
 
 .character-layout > .character-side-panel .card-rating-panel {
@@ -10799,7 +11678,7 @@ button.assembly-group-head:focus-visible {
   display: grid;
   gap: 8px;
   padding: 10px;
-  border: 2px solid #e9bad0;
+  border: 0;
   border-radius: 6px;
   background: #fff5fb;
 }
@@ -11682,10 +12561,14 @@ body.model-preview-expanded { overflow: hidden; }
   align-items: center;
   gap: 9px;
   min-width: 0;
-  padding: 10px 9px;
+  padding: 7px 9px;
   overflow: hidden;
-  border: 1px solid var(--glass-border);
+  border: 0;
   border-radius: 12px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 800;
   background: rgba(247, 251, 255, .3);
   background: color-mix(in srgb, var(--bg-color) 20%, transparent);
   -webkit-backdrop-filter: blur(12px) saturate(1.06);
@@ -11695,7 +12578,7 @@ body.model-preview-expanded { overflow: hidden; }
 }
 
 .character-tool-card:hover {
-  border-color: rgba(126, 143, 157, .42);
+  border-color: transparent;
   background: rgba(255, 255, 255, .36);
   background: color-mix(in srgb, var(--surface-clean) 30%, transparent);
   box-shadow: var(--glass-shadow), 0 8px 20px rgba(50, 63, 76, .09);
@@ -11716,14 +12599,18 @@ body.model-preview-expanded { overflow: hidden; }
 
 .character-tool-copy strong {
   color: var(--text);
+  font-family: var(--font);
   font-size: 11px;
+  font-weight: 800;
   line-height: 1.25;
 }
 
 .character-tool-action {
   min-width: 66px;
-  padding: 8px 12px;
-  border: 1px solid rgba(126, 143, 157, .26);
+  height: 32px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
   border-radius: 8px;
   color: var(--ink);
   background: rgba(255, 255, 255, .3);
@@ -11732,14 +12619,15 @@ body.model-preview-expanded { overflow: hidden; }
   backdrop-filter: blur(8px) saturate(1.04);
   box-shadow: 0 2px 7px rgba(50, 63, 76, .07);
   font: inherit;
-  font-size: 10px;
-  font-weight: 900;
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 800;
   cursor: pointer;
   transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
 }
 
 .character-tool-action:not(:disabled):hover {
-  border-color: rgba(126, 143, 157, .44);
+  border-color: transparent;
   background: rgba(255, 255, 255, .48);
   background: color-mix(in srgb, var(--surface-clean) 46%, transparent);
   box-shadow: 0 4px 10px rgba(50, 63, 76, .1);
@@ -11764,9 +12652,12 @@ body.model-preview-expanded { overflow: hidden; }
 
 .character-tool-actions .character-tool-action {
   min-width: 50px;
-  padding: 6px 7px;
-  font-family: var(--mono);
-  font-size: 9px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 7px;
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .card-load-tool {
@@ -11833,14 +12724,14 @@ body.model-preview-expanded { overflow: hidden; }
 }
 
 .character-tool-danger-card .character-tool-action {
-  border-color: rgba(190, 76, 88, .54);
+  border: 0;
   background: rgba(255, 245, 245, .44);
   color: #a32936;
 }
 
 .character-tool-danger-card .character-tool-action:not(:disabled):hover,
 .character-tool-danger-card .character-tool-action:not(:disabled):focus-visible {
-  border-color: rgba(169, 32, 48, .78);
+  border-color: transparent;
   background: rgba(255, 232, 234, .72);
   box-shadow: 0 4px 10px rgba(169, 32, 48, .12);
 }
@@ -13060,12 +13951,12 @@ body.model-preview-expanded { overflow: hidden; }
 }
 
 .related-item {
-  min-height: 72px;
+  min-height: 60px;
   display: grid;
   grid-template-columns: 50px minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  padding: 10px 12px;
+  padding: 6px 12px;
   border: 1px solid #d3cec5;
   border-radius: 6px;
   background: var(--surface-clean);
@@ -13086,13 +13977,9 @@ body.model-preview-expanded { overflow: hidden; }
   display: inline-grid;
   place-items: center;
   overflow: hidden;
-  border: 3px solid var(--line-strong);
+  border: 0;
   border-radius: 4px;
-  background:
-    linear-gradient(135deg, rgba(218, 241, 255, .7) 25%, transparent 25%, transparent 75%, rgba(218, 241, 255, .7) 75%),
-    linear-gradient(135deg, rgba(255, 216, 231, .72) 25%, var(--surface-clean) 25%, var(--surface-clean) 75%, rgba(255, 216, 231, .72) 75%);
-  background-position: 0 0, 7px 7px;
-  background-size: 14px 14px;
+  background: transparent;
   font-family: var(--mono);
   font-weight: 900;
 }
@@ -13118,6 +14005,29 @@ body.model-preview-expanded { overflow: hidden; }
 .related-item-main strong {
   display: block;
   font-size: 15px;
+}
+
+.unity3d-dependency-list {
+  display: grid;
+  gap: 8px;
+}
+
+.unity3d-dependency-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid #d3cec5;
+  border-radius: 6px;
+  background: var(--surface-clean);
+}
+
+.unity3d-dependency-row strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .related-item-main p {
@@ -13524,6 +14434,7 @@ tbody tr:hover td {
 .task-result-grid strong { color: #274454; font: 800 17px var(--mono); }
 .task-message-list { display: grid; gap: 6px; max-height: 230px; overflow: auto; padding: 11px 12px; border: 1px solid rgba(126, 143, 157, .24); border-radius: 10px; background: rgba(255, 255, 255, .24); background: color-mix(in srgb, var(--surface-clean) 24%, transparent); scrollbar-width: thin; }
 .task-message-list p { margin: 0; color: #516b77; font: 11px/1.5 var(--mono); overflow-wrap: anywhere; }
+.task-message-list .task-message-muted { color: #7a858b; font-style: italic; }
 .task-message-list p + p { padding-top: 6px; border-top: 1px solid rgba(126, 143, 157, .14); }
 .task-message-list .task-message-error { color: #9e2831; }
 .task-drawer-meta { display: grid; gap: 0; margin: 22px 0 0; border-top: 1px solid rgba(126, 143, 157, .22); }
@@ -13758,9 +14669,11 @@ tbody tr:hover td {
 
 .mod-management-layout > .mod-detail-panel .mod-detail-head {
   border-bottom: 0;
-  background: rgba(255, 255, 255, .2);
-  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, .18);
-  transition: background-color .2s ease, box-shadow .2s ease;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  transition: none;
 }
 
 .mod-management-layout > .mod-detail-panel .mod-detail-head .badge,
@@ -13845,6 +14758,41 @@ tbody tr:hover td {
   color: #087765;
 }
 
+/* 模组和物品详情页签统一使用轻量胶囊导航，避免实体分栏抢占详情面板。 */
+.mod-management-layout > .mod-detail-panel .mod-detail-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border-bottom: 0;
+}
+
+.mod-management-layout > .mod-detail-panel .mod-detail-tabs button,
+.mod-management-layout > .mod-detail-panel .mod-detail-tabs button:hover,
+.mod-management-layout > .mod-detail-panel .mod-detail-tabs button:focus-visible,
+.mod-management-layout > .mod-detail-panel .mod-detail-tabs button.active {
+  min-width: 72px;
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: rgba(73, 80, 91, .78);
+  outline: none;
+}
+
+.mod-management-layout > .mod-detail-panel .mod-detail-tabs button:hover,
+.mod-management-layout > .mod-detail-panel .mod-detail-tabs button:focus-visible {
+  background: rgba(255, 255, 255, .28);
+  color: var(--text);
+}
+
+.mod-management-layout > .mod-detail-panel .mod-detail-tabs button.active {
+  background: rgba(255, 255, 255, .58);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .84), 0 4px 12px rgba(69, 87, 101, .1);
+  color: #087765;
+}
+
 .mod-management-layout > .mod-page .mod-tabs button,
 .mod-management-layout > .mod-page .mod-tabs button:hover,
 .mod-management-layout > .mod-page .mod-tabs button:focus-visible,
@@ -13854,23 +14802,84 @@ tbody tr:hover td {
   border-bottom-color: transparent;
 }
 
-.mod-management-layout > .mod-page .table-wrap > table > thead {
-  position: sticky;
-  top: 0;
+.mod-management-layout > .mod-page .mod-table-header > table > thead > tr > th {
+  position: relative;
   z-index: 1;
-  background: var(--glass-background-fallback);
-  background: var(--glass-background);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28);
-}
-
-.mod-management-layout > .mod-page .table-wrap > table > thead > tr > th {
-  position: static;
-  background: transparent;
+  background: rgba(247, 251, 255, .16);
+  background: color-mix(in srgb, var(--bg-color) 16%, transparent);
+  background-clip: padding-box;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   box-shadow: none;
+}
+
+/* 模组浏览表格正文和行高使用更紧凑的尺寸，物品浏览表格和筛选控件保持原样。 */
+.mod-management-layout > .mod-page .mod-table-header > table,
+.mod-management-layout > .mod-page .mod-table-body > table {
+  table-layout: fixed;
+  font-size: 12px;
+}
+
+.mod-management-layout > .mod-page .mod-table-header > table .mod-status-column,
+.mod-management-layout > .mod-page .mod-table-body > table .mod-status-column {
+  width: 64px;
+  min-width: 64px;
+  max-width: 64px;
+}
+
+.mod-management-layout > .mod-page .mod-table-header > table .mod-author-column,
+.mod-management-layout > .mod-page .mod-table-body > table .mod-author-column {
+  width: 152px;
+  min-width: 152px;
+  max-width: 152px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mod-management-layout > .mod-page .mod-table-header > table .mod-guid-column,
+.mod-management-layout > .mod-page .mod-table-body > table .mod-guid-column {
+  width: auto;
+  min-width: 0;
+}
+
+.mod-management-layout > .mod-page .mod-table-body > table > tbody > tr > td {
+  height: 42px;
+  padding: 3px 10px;
+}
+
+.mod-management-layout > .mod-page .mod-table-body > table > tbody > tr > td .badge {
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.mod-management-layout > .mod-page .mod-table-header > table .mod-name-column,
+.mod-management-layout > .mod-page .mod-table-body > table .mod-name-column {
+  width: 200px;
+  min-width: 200px;
+  max-width: 200px;
+  overflow: hidden;
+}
+
+.mod-management-layout > .mod-page .mod-table-header > table .mod-name-column > .text-ellipsis,
+.mod-management-layout > .mod-page .mod-table-body > table .mod-name-column > .text-ellipsis {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mod-management-layout > .mod-page .mod-table-header > table .mod-version-column,
+.mod-management-layout > .mod-page .mod-table-body > table .mod-version-column,
+.mod-management-layout > .mod-page .mod-table-header > table .mod-item-count-column,
+.mod-management-layout > .mod-page .mod-table-body > table .mod-item-count-column {
+  width: 72px;
+  min-width: 72px;
+  max-width: 72px;
+  overflow: hidden;
 }
 
 .mod-management-layout > .mod-page .compact-item-grid .compact-item-card {
@@ -13945,6 +14954,7 @@ tbody tr:hover td {
 .mod-management-layout > .mod-detail-panel .mod-kv,
 .mod-management-layout > .mod-detail-panel .detail-inline-state,
 .mod-management-layout > .mod-detail-panel .related-item,
+.mod-management-layout > .mod-detail-panel .unity3d-dependency-row,
 .mod-management-layout > .mod-detail-panel .thumbnail-repair-item {
   border-color: rgba(255, 255, 255, .64);
   border-radius: 10px;
@@ -13955,12 +14965,44 @@ tbody tr:hover td {
   transition: background-color .2s ease, border-color .2s ease, box-shadow .2s ease, color .2s ease;
 }
 
+.mod-management-layout > .mod-detail-panel .related-item {
+  border: 0;
+  box-shadow: 0 3px 10px rgba(69, 87, 101, .05);
+}
+
+.mod-management-layout > .mod-detail-panel .unity3d-dependency-row {
+  border: 0;
+}
+
+.mod-management-layout > .mod-detail-panel .diagnostic-empty-state {
+  border: 0;
+  box-shadow: none;
+}
+
 .mod-management-layout > .mod-detail-panel .mod-kv:hover,
 .mod-management-layout > .mod-detail-panel .related-item:hover,
+.mod-management-layout > .mod-detail-panel .unity3d-dependency-row:hover,
 .mod-management-layout > .mod-detail-panel .thumbnail-repair-item:hover {
   border-color: rgba(111, 154, 171, .48);
   background: rgba(240, 250, 255, .46);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .7), 0 5px 14px rgba(69, 87, 101, .08);
+}
+
+.mod-management-layout > .mod-detail-panel .related-item:hover,
+.mod-management-layout > .mod-detail-panel .related-item:focus-visible {
+  border: 0;
+  box-shadow: 0 5px 14px rgba(69, 87, 101, .08);
+  outline: none;
+}
+
+.mod-management-layout > .mod-detail-panel .mod-kv {
+  border-color: transparent;
+  box-shadow: 0 3px 10px rgba(69, 87, 101, .05);
+}
+
+.mod-management-layout > .mod-detail-panel .mod-kv:hover {
+  border-color: transparent;
+  box-shadow: 0 5px 14px rgba(69, 87, 101, .08);
 }
 
 .mod-management-layout > .mod-detail-panel .mod-kv > span:first-child,
@@ -14026,10 +15068,10 @@ tbody tr:hover td {
 .mod-management-layout > .mod-detail-panel .builtin-item-detail,
 .mod-management-layout > .mod-detail-panel .item-tools-section .item-tool-card,
 .mod-management-layout > .mod-detail-panel .diagnostic-card {
-  border-color: rgba(255, 255, 255, .56);
+  border: 0;
   border-radius: 10px;
   background: rgba(255, 255, 255, .22);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .46);
+  box-shadow: none;
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
 }
@@ -14098,6 +15140,153 @@ tbody tr:hover td {
 .mod-management-layout > .mod-detail-panel .assembly-group-head:focus-visible,
 .mod-management-layout > .mod-detail-panel .assembly-slot-row:hover {
   background: rgba(222, 245, 244, .48);
+}
+
+/* 装配模式顶部栏使用透明玻璃层，内部状态与选择控件同步降低实体感。 */
+.assembly-topbar {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.assembly-topbar .assembly-hero,
+.assembly-topbar .assembly-status-banner,
+.assembly-topbar .assembly-state-card {
+  border: 1px solid rgba(255, 255, 255, .56);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .2);
+  background: color-mix(in srgb, var(--surface-clean) 22%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .62), 0 5px 16px rgba(69, 87, 101, .07);
+  -webkit-backdrop-filter: blur(12px) saturate(1.08);
+  backdrop-filter: blur(12px) saturate(1.08);
+}
+
+.assembly-topbar .assembly-hero-copy h3 {
+  color: #245363;
+}
+
+.assembly-topbar .assembly-hero-copy small {
+  color: rgba(71, 100, 110, .78);
+}
+
+.assembly-topbar .assembly-sync-state {
+  border-color: rgba(126, 151, 165, .46);
+  background: rgba(255, 255, 255, .24);
+  background: color-mix(in srgb, var(--surface-clean) 26%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .56);
+  color: #536b73;
+  -webkit-backdrop-filter: blur(8px) saturate(1.04);
+  backdrop-filter: blur(8px) saturate(1.04);
+}
+
+.assembly-topbar .assembly-sync-state.ready {
+  border-color: rgba(75, 164, 137, .52);
+  background: rgba(224, 249, 239, .46);
+  color: #176b53;
+}
+
+.assembly-topbar .assembly-sync-state.loading {
+  border-color: rgba(104, 166, 185, .5);
+  background: rgba(225, 246, 252, .46);
+  color: #2c6e7d;
+}
+
+.assembly-topbar .assembly-character-picker-toggle {
+  border-color: rgba(126, 164, 171, .5);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, .22);
+  background: color-mix(in srgb, var(--surface-clean) 24%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .56), 0 3px 10px rgba(69, 87, 101, .05);
+  color: #294e55;
+  -webkit-backdrop-filter: blur(9px) saturate(1.06);
+  backdrop-filter: blur(9px) saturate(1.06);
+}
+
+.assembly-topbar .assembly-character-picker-toggle:hover,
+.assembly-topbar .assembly-character-picker-toggle:focus-visible,
+.assembly-topbar .assembly-character-picker-toggle.open {
+  border-color: rgba(79, 142, 141, .7);
+  background: rgba(241, 251, 250, .42);
+  background: color-mix(in srgb, #e8f8f6 46%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .68), 0 4px 12px rgba(69, 125, 128, .08);
+}
+
+.assembly-topbar .assembly-character-options {
+  border-color: rgba(126, 164, 171, .56);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .3);
+  background: color-mix(in srgb, var(--surface-clean) 34%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .62), 0 9px 22px rgba(69, 87, 101, .12);
+  -webkit-backdrop-filter: blur(14px) saturate(1.08);
+  backdrop-filter: blur(14px) saturate(1.08);
+}
+
+.assembly-topbar .assembly-character-option {
+  border-color: rgba(126, 151, 165, .38);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .22);
+  background: color-mix(in srgb, var(--surface-clean) 24%, transparent);
+  color: #355159;
+}
+
+.assembly-topbar .assembly-character-option:hover,
+.assembly-topbar .assembly-character-option:focus-visible {
+  border-color: rgba(94, 154, 154, .66);
+  background: rgba(241, 251, 250, .44);
+  background: color-mix(in srgb, #e8f8f6 48%, transparent);
+}
+
+.assembly-topbar .assembly-character-option.selected {
+  border-color: rgba(44, 119, 119, .66);
+  background: rgba(226, 248, 239, .48);
+  background: color-mix(in srgb, #e2f8ef 54%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .56);
+}
+
+.assembly-topbar .assembly-state-card {
+  border-style: solid;
+  color: #496971;
+}
+
+.assembly-topbar .assembly-state-card.error,
+.assembly-topbar .assembly-status-banner.error {
+  border-color: rgba(214, 106, 115, .48);
+  background: rgba(255, 226, 226, .38);
+  background: color-mix(in srgb, #ffe2e2 42%, transparent);
+  color: #8d3a43;
+}
+
+.assembly-topbar .assembly-status-banner.success {
+  border-color: rgba(91, 178, 151, .48);
+  background: rgba(224, 249, 239, .4);
+  background: color-mix(in srgb, #e0f9ef 44%, transparent);
+  color: #256345;
+}
+
+.assembly-topbar .assembly-state-card button,
+.assembly-topbar .assembly-status-banner button {
+  border-color: currentColor;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .24);
+  background: color-mix(in srgb, var(--surface-clean) 28%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5);
+}
+
+.assembly-topbar .assembly-state-card button:hover:not(:disabled),
+.assembly-topbar .assembly-status-banner button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, .42);
+  background: color-mix(in srgb, var(--surface-clean) 44%, transparent);
+}
+
+/* 顶部玻璃控件不显示高亮描边，只保留柔和的整体层次阴影。 */
+.assembly-topbar .assembly-hero,
+.assembly-topbar .assembly-status-banner,
+.assembly-topbar .assembly-status-banner.error,
+.assembly-topbar .assembly-status-banner.success,
+.assembly-topbar .assembly-state-card,
+.assembly-topbar .assembly-state-card.error {
+  border: 0;
+  box-shadow: 0 5px 16px rgba(69, 87, 101, .07);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -14512,6 +15701,16 @@ tbody tr:hover td {
     var(--glass-background);
 }
 
+/* 服装卡浏览器容器不显示玻璃层的高光外框，保持内容与背景连续。 */
+.clothes-card-layout > .clothes-browser-panel {
+  border: 0;
+}
+
+/* 场景卡浏览器容器同样不显示玻璃层的高光外框。 */
+.scene-card-layout > .scene-browser-panel {
+  border: 0;
+}
+
 .clothes-card-layout > .clothes-browser-panel > .clothes-browser-head,
 .scene-card-layout > .scene-browser-panel > .clothes-browser-head,
 .clothes-card-layout > .clothes-side-panel > .character-side-head,
@@ -14646,6 +15845,15 @@ tbody tr:hover td {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .58), 0 2px 8px rgba(59, 77, 91, .05);
 }
 
+/* 目录行保留选中背景，但不显示玻璃层的高光边框。 */
+.clothes-card-layout > .clothes-side-panel .clothes-tree-row:hover,
+.clothes-card-layout > .clothes-side-panel .clothes-tree-row.active,
+.scene-card-layout > .scene-side-panel .clothes-tree-row:hover,
+.scene-card-layout > .scene-side-panel .clothes-tree-row.active {
+  border-color: transparent;
+  box-shadow: none;
+}
+
 .clothes-card-layout > .clothes-side-panel .clothes-tree-toggle,
 .scene-card-layout > .scene-side-panel .clothes-tree-toggle {
   border: 1px solid transparent;
@@ -14666,9 +15874,9 @@ tbody tr:hover td {
 
 .clothes-card-layout > .clothes-side-panel .clothes-folder-count,
 .scene-card-layout > .scene-side-panel .clothes-folder-count {
-  border: 1px solid rgba(255, 255, 255, .54);
+  border: 0;
   background: rgba(255, 255, 255, .3);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .56);
+  box-shadow: none;
   color: #326477;
 }
 
@@ -14746,6 +15954,10 @@ tbody tr:hover td {
   border: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.scene-card-layout > .scene-side-panel .scene-detail-tabs {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .clothes-card-layout > .clothes-side-panel .clothes-detail-tabs button,
@@ -14853,6 +16065,39 @@ tbody tr:hover td {
 .clothes-card-layout > .clothes-side-panel .clothes-detail-tab-panel,
 .scene-card-layout > .scene-side-panel .clothes-detail-tab-panel {
   gap: 10px;
+}
+
+.scene-card-layout > .scene-side-panel .scene-detail-tool-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--card-glass-border);
+  border-radius: 12px;
+  background: var(--card-glass-surface);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .46), 0 3px 10px rgba(59, 77, 91, .05);
+  -webkit-backdrop-filter: blur(7px);
+  backdrop-filter: blur(7px);
+}
+
+.scene-card-layout > .scene-side-panel .scene-detail-tool-card strong {
+  display: block;
+  color: var(--card-glass-text);
+  font-size: 13px;
+}
+
+.scene-card-layout > .scene-side-panel .scene-detail-tool-card .subtext {
+  margin: 4px 0 0;
+  color: var(--card-glass-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.scene-card-layout > .scene-side-panel .scene-detail-tool-card .clothes-open-directory {
+  margin-top: 0;
+}
+
+.scene-card-layout > .scene-side-panel .scene-detail-tool-card .clothes-detail-empty {
+  min-height: 56px;
 }
 
 .clothes-card-layout > .clothes-side-panel .card-dependency-browser,
@@ -15331,36 +16576,36 @@ tbody tr:hover td {
   background: color-mix(in srgb, var(--surface-clean) 46%, transparent);
 }
 
-/* 物品浏览表格与紧凑视图复用模组列表的中性玻璃选中态。 */
+/* 物品浏览表格与紧凑视图使用浅粉色选中态，方便在缩略图列表中确认当前物品。 */
 .mod-page .item-table-virtual-row.selected {
-  background: rgba(255, 255, 255, .34);
-  background: color-mix(in srgb, var(--surface-clean) 36%, transparent);
-  color: var(--text);
+  background: rgba(255, 220, 232, .8);
+  background: color-mix(in srgb, #ffdce8 80%, var(--surface-clean) 20%);
+  color: #5d3044;
   -webkit-backdrop-filter: blur(14px) saturate(1.1);
   backdrop-filter: blur(14px) saturate(1.1);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .48), inset 0 -1px 0 rgba(133, 151, 164, .12);
+  box-shadow: inset 0 0 0 1px rgba(210, 94, 137, .42), inset 0 1px 0 rgba(255, 255, 255, .62), inset 0 -1px 0 rgba(168, 74, 111, .14);
 }
 
 .mod-page .item-table-virtual-row.selected:hover {
-  background: rgba(255, 255, 255, .44);
-  background: color-mix(in srgb, var(--surface-clean) 46%, transparent);
+  background: rgba(255, 210, 226, .88);
+  background: color-mix(in srgb, #ffd2e2 84%, var(--surface-clean) 16%);
 }
 
 .mod-management-layout > .mod-page .compact-item-grid .compact-item-card.selected {
-  border-color: rgba(255, 255, 255, .86);
-  background: rgba(255, 255, 255, .34);
-  background: color-mix(in srgb, var(--surface-clean) 36%, transparent);
-  color: var(--text);
-  outline: 1px solid rgba(112, 143, 160, .5);
-  outline-offset: -2px;
+  border-color: transparent;
+  background: rgba(255, 220, 232, .8);
+  background: color-mix(in srgb, #ffdce8 80%, var(--surface-clean) 20%);
+  color: #5d3044;
+  outline: none;
+  outline-offset: 0;
   -webkit-backdrop-filter: blur(14px) saturate(1.1);
   backdrop-filter: blur(14px) saturate(1.1);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .56), 0 3px 10px rgba(63, 85, 99, .08);
+  box-shadow: inset 0 0 0 1px rgba(210, 94, 137, .24), inset 0 1px 0 rgba(255, 255, 255, .62), 0 3px 10px rgba(190, 75, 116, .16);
 }
 
 .mod-management-layout > .mod-page .compact-item-grid .compact-item-card.selected:hover {
-  background: rgba(255, 255, 255, .44);
-  background: color-mix(in srgb, var(--surface-clean) 46%, transparent);
+  background: rgba(255, 210, 226, .88);
+  background: color-mix(in srgb, #ffd2e2 84%, var(--surface-clean) 16%);
 }
 
 /* Shared Chromium/Windows and Firefox scrollbar surface for every scrollable

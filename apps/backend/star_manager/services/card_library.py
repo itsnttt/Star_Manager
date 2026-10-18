@@ -47,7 +47,11 @@ from star_manager.core.coordinate_card import (
     parse_coordinate_payload_parts,
     read_dotnet_string,
 )
-from star_manager.core.scene_card import inspect_scene_card_file
+from star_manager.core.scene_card import (
+    extract_scene_character_cards,
+    find_png_end,
+    inspect_scene_card_file,
+)
 from star_manager.core.character_profile import (
     CharacterProfileUpdateError,
     replace_character_card_cover_file,
@@ -1055,6 +1059,21 @@ def _scene_card_row(game_dir: str, root: Path, card_path: Path, stat: os.stat_re
     }
 
 
+def _scene_card_files(folder: Path) -> list[tuple[Path, os.stat_result]]:
+    """Return only PNGs carrying a valid StudioNEOV2 scene payload."""
+    cards: list[tuple[Path, os.stat_result]] = []
+    for file_path in folder.iterdir():
+        if not file_path.is_file() or file_path.suffix.lower() != ".png":
+            continue
+        if inspect_scene_card_file(file_path, include_character_dependencies=False) is None:
+            continue
+        try:
+            cards.append((file_path, file_path.stat()))
+        except OSError:
+            continue
+    return cards
+
+
 def _build_scene_tree_node(folder: Path, root: Path) -> dict[str, object]:
     entries = sorted(folder.iterdir(), key=lambda item: item.name.casefold())
     children = [
@@ -1062,9 +1081,7 @@ def _build_scene_tree_node(folder: Path, root: Path) -> dict[str, object]:
         for child in entries
         if child.is_dir()
     ]
-    direct_png_count = sum(
-        1 for entry in entries if entry.is_file() and entry.suffix.lower() == ".png"
-    )
+    direct_png_count = len(_scene_card_files(folder))
     relative_path = normalize_relative(folder, root)
     return {
         "id": relative_path or ".",
@@ -1111,14 +1128,7 @@ def list_scene_cards(
     offset = max(0, int(offset or 0))
     if limit is not None:
         limit = max(1, min(int(limit), 240))
-    png_files: list[tuple[Path, os.stat_result]] = []
-    for file_path in folder.iterdir():
-        if not file_path.is_file() or file_path.suffix.lower() != ".png":
-            continue
-        try:
-            png_files.append((file_path, file_path.stat()))
-        except OSError:
-            continue
+    png_files = _scene_card_files(folder)
     png_files.sort(key=lambda item: item[0].name.casefold())
     page = png_files[offset:] if limit is None else png_files[offset : offset + limit]
     return {
@@ -1140,11 +1150,9 @@ def get_scene_card_detail(game_dir: str, relative_path: str) -> dict:
         return invalid_payload(error)
 
     card_path = resolve_scene_file(root, relative_path)
-    parsed = inspect_scene_card_file(card_path) or {
-        "is_scene_card": False,
-        "dependencies": [],
-        "dependency_count": 0,
-    }
+    parsed = inspect_scene_card_file(card_path)
+    if not parsed:
+        return {"ok": False, "error": "目标文件不是有效的 Studio 场景卡"}
     resolved_dependencies = resolve_dependency_records(parsed.get("dependencies") or [])
     stat = card_path.stat()
     card = _scene_card_row(game_dir, root, card_path, stat)
@@ -1156,6 +1164,73 @@ def get_scene_card_detail(game_dir: str, relative_path: str) -> dict:
         "is_valid_game_dir": True,
         "root": str(root),
         "card": card,
+    }
+
+
+def export_scene_character_cards(
+    game_dir: str,
+    relative_path: str,
+    target_dir: str,
+    progress_callback=None,
+) -> dict:
+    """Export every AIS character embedded in one Studio scene card."""
+    is_valid, root, error = validate_scene_root(game_dir)
+    if not is_valid:
+        return {"ok": False, "error": error}
+
+    source = resolve_scene_file(root, relative_path)
+    try:
+        file_bytes = source.read_bytes()
+        png_end = find_png_end(file_bytes)
+    except (OSError, ValueError) as exc:
+        return {"ok": False, "error": f"场景卡读取失败：{exc}"}
+
+    if inspect_scene_card_file(source) is None:
+        return {"ok": False, "error": "目标文件不是有效的 Studio 场景卡"}
+
+    cards = extract_scene_character_cards(file_bytes)
+    if not cards:
+        return {"ok": False, "error": "场景卡中没有可导出的人物卡。"}
+
+    output_dir = Path(str(target_dir or "")).expanduser().resolve()
+    if not output_dir.is_dir():
+        return {"ok": False, "error": "人物卡导出路径不存在或不是文件夹。"}
+
+    scene_stem = source.stem
+    exported: list[dict[str, object]] = []
+    scene_png = file_bytes[:png_end]
+    total = len(cards)
+    for index, card in enumerate(cards, start=1):
+        name = str(card.get("name") or "").strip()
+        if not name:
+            name = f"{scene_stem}_角色{index}"
+        filename = safe_coordinate_filename(name)
+        if len(cards) > 1 and not filename.endswith(f"_{index}"):
+            filename = f"{filename}_{index}"
+        target = unique_coordinate_output_path(output_dir, filename)
+        try:
+            target.write_bytes(scene_png + bytes(card["payload"]))
+        except OSError as exc:
+            return {"ok": False, "error": f"人物卡写入失败：{exc}"}
+        exported.append(
+            {
+                "index": index,
+                "name": name,
+                "sex": card.get("sex"),
+                "target_path": str(target),
+                "output_size": target.stat().st_size,
+            }
+        )
+        if progress_callback:
+            progress_callback(index, total, name)
+
+    return {
+        "ok": True,
+        "source_path": str(source),
+        "target_dir": str(output_dir),
+        "exported_count": len(exported),
+        "exported": exported,
+        "message": f"已导出 {len(exported)} 张人物卡",
     }
 
 
@@ -1796,7 +1871,7 @@ def list_character_cards(
     folder = root if recursive else resolve_card_directory(root, relative_path)
     offset = max(0, int(offset or 0))
     if limit is not None:
-        limit = max(1, min(int(limit), 240))
+        limit = max(1, min(int(limit), 500 if recursive else 240))
     normalized_tag = str(tag or "").strip().casefold()
     cards = []
     enumerate_started_at = perf_counter()
@@ -1823,10 +1898,17 @@ def list_character_cards(
         )
     enumerate_duration_ms = round((perf_counter() - enumerate_started_at) * 1000, 2)
 
-    card_files_for_page = card_files
-    if limit is not None and not recursive:
-        card_files_for_page = card_files[offset : offset + limit]
     index_started_at = perf_counter()
+    card_files_for_page = card_files
+    indexed_cards: dict[str, dict[str, object]] = {}
+    indexed_recursive_listing = recursive and not normalized_tag and Path(db_path).is_file()
+    if indexed_recursive_listing:
+        # The list only needs lightweight display metadata for the requested
+        # page (or the complete library when limit is omitted). Full card
+        # parsing remains deferred to the detail endpoint.
+        card_files_for_page = card_files[offset:] if limit is None else card_files[offset : offset + limit]
+    elif limit is not None and not recursive:
+        card_files_for_page = card_files[offset : offset + limit]
     indexed_cards = indexed_card_metadata(db_path, card_files_for_page)
     index_duration_ms = round((perf_counter() - index_started_at) * 1000, 2)
     metadata_updates: list[tuple[str, str, int, int, int, int, str]] = []
@@ -1904,6 +1986,9 @@ def list_character_cards(
                 "missing_count": (
                     indexed_card["missing_count"] if indexed_card is not None else None
                 ),
+                "missing_mod_count": (
+                    indexed_card["missing_mod_count"] if indexed_card is not None else None
+                ),
                 "favorite": bool(listing_data["favorite"]),
                 "rating": int(listing_data["rating"]),
                 "tags": list(listing_data["tags"]),
@@ -1913,17 +1998,26 @@ def list_character_cards(
     update_indexed_card_listing_metadata(db_path, metadata_updates)
     card_loop_duration_ms = round((perf_counter() - card_loop_started_at) * 1000, 2)
 
+    response_cards = cards
+    response_total = len(cards) if recursive or limit is None else len(card_files)
+    if recursive and limit is not None and not indexed_recursive_listing:
+        response_cards = cards[offset : offset + limit]
+    if indexed_recursive_listing:
+        response_total = len(card_files)
+
     return {
         "ok": True,
         "is_valid_game_dir": True,
         "root": str(root),
         "relative_path": normalize_relative(folder, root),
-        "cards": cards,
-        "total": len(cards) if limit is None or recursive else len(card_files),
+        "cards": response_cards,
+        "total": response_total,
         "offset": offset,
         "limit": limit,
         "has_more": (
-            False
+            offset + len(response_cards) < response_total
+            if recursive and limit is not None
+            else False
             if recursive or limit is None
             else offset + len(card_files_for_page) < len(card_files)
         ),
@@ -1935,7 +2029,7 @@ def list_character_cards(
             "card_loop_ms": card_loop_duration_ms,
             "total_ms": round((perf_counter() - started_at) * 1000, 2),
             "card_file_count": len(card_files),
-            "page_file_count": len(card_files_for_page),
+            "page_file_count": len(response_cards) if recursive and limit is not None else len(card_files_for_page),
             "indexed_card_count": len(indexed_cards),
             "listing_reads": listing_reads,
             "metadata_updates": len(metadata_updates),
@@ -2133,11 +2227,20 @@ def indexed_card_metadata(
     try:
         init_db(conn)
         select_sql = """
-            SELECT file_path, chara_name, tags_json, favorite, rating,
+            SELECT cc.file_path, cc.chara_name, cc.tags_json, cc.favorite, cc.rating,
                    metadata_file_size, metadata_modified_ns, parse_status,
-                   dependency_count, missing_count
-            FROM character_cards
-            WHERE parse_status != 'stale'
+                   dependency_count, missing_count,
+                   COALESCE((
+                       SELECT COUNT(DISTINCT CASE
+                           WHEN trim(ccd.mod_id) != '' THEN lower(trim(ccd.mod_id))
+                           ELSE 'missing-row:' || ccd.id
+                       END)
+                       FROM character_card_dependencies ccd
+                       WHERE ccd.card_id = cc.id
+                         AND ccd.resolve_status != 'resolved'
+                   ), 0) AS missing_mod_count
+            FROM character_cards cc
+            WHERE cc.parse_status != 'stale'
         """
         if file_paths is None:
             rows = conn.execute(select_sql).fetchall()
@@ -2176,6 +2279,7 @@ def indexed_card_metadata(
             "parse_status": str(row["parse_status"] or ""),
             "dependency_count": int(row["dependency_count"] or 0),
             "missing_count": int(row["missing_count"] or 0),
+            "missing_mod_count": int(row["missing_mod_count"] or 0),
         }
     return indexed
 

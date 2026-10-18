@@ -1,10 +1,11 @@
 import struct
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from star_manager.core.scene_card import inspect_scene_card_bytes
+from star_manager.core.scene_card import extract_scene_character_cards, inspect_scene_card_bytes
 
 
 def _fixstr(value: str) -> bytes:
@@ -116,3 +117,75 @@ def test_scene_card_extracts_item_and_pattern_info_records():
     pattern_dependency = next(item for item in parsed["dependencies"] if item["DependencyType"] == "scene_pattern")
     assert pattern_dependency["SceneDicKey"] == 2384
     assert pattern_dependency["SceneObjectOrder"] == 1829
+
+
+def test_scene_card_extracts_embedded_ais_character_payload():
+    marker = "【AIS_Chara】"
+
+    def dotnet_string(value: str) -> bytes:
+        encoded = value.encode("utf-8")
+        return bytes([len(encoded)]) + encoded
+
+    png = b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 0) + b"IEND" + b"\xaeB`\x82"
+    embedded = (
+        (100).to_bytes(4, "little", signed=True)
+        + dotnet_string(marker)
+        + dotnet_string("1.0")
+        + (0).to_bytes(4, "little", signed=True)
+        + dotnet_string("user")
+        + dotnet_string("card")
+        + (2).to_bytes(4, "little", signed=True)
+        + b"\x90\x00"
+        + (3).to_bytes(8, "little", signed=True)
+        + b"abc"
+    )
+
+    cards = extract_scene_character_cards(png + b"scene-data" + embedded)
+
+    assert len(cards) == 1
+    assert cards[0]["payload"] == embedded
+
+
+def test_scene_card_includes_embedded_character_dependencies():
+    marker = "【AIS_Chara】"
+
+    def dotnet_string(value: str) -> bytes:
+        encoded = value.encode("utf-8")
+        return bytes([len(encoded)]) + encoded
+
+    record = _pack(
+        {
+            "ModID": "com.example.character-clothes",
+            "CategoryNo": 140,
+            "Slot": 3,
+            "Property": "outfit.ChaFileClothes.clothestop",
+        }
+    )
+    plugin_id = "com.bepis.sideloader.universalautoresolver"
+    kkex = _pack(plugin_id) + _pack([0, {"info": [record]}])
+    block_table = _pack(
+        {"lstInfo": [{"name": "KKEx", "pos": 0, "size": len(kkex)}]}
+    )
+    embedded = (
+        (100).to_bytes(4, "little", signed=True)
+        + dotnet_string(marker)
+        + dotnet_string("1.0")
+        + (0).to_bytes(4, "little", signed=True)
+        + dotnet_string("user")
+        + dotnet_string("card")
+        + len(block_table).to_bytes(4, "little", signed=True)
+        + block_table
+        + len(kkex).to_bytes(8, "little", signed=True)
+        + kkex
+    )
+
+    with patch(
+        "star_manager.core.scene_card.extract_scene_character_cards",
+        return_value=[{"index": 0, "payload": embedded}],
+    ):
+        parsed = inspect_scene_card_bytes(_scene_png(b""))
+
+    assert parsed is not None
+    assert parsed["dependency_count"] == 1
+    assert parsed["dependencies"][0]["ModID"] == "com.example.character-clothes"
+    assert parsed["dependencies"][0]["CategoryNo"] == 140

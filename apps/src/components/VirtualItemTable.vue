@@ -9,32 +9,24 @@ const props = defineProps({
   isMapSceneItem: { type: Function, required: true }
 });
 
-const emit = defineEmits(["item-click", "item-dblclick", "item-contextmenu"]);
+const emit = defineEmits(["item-click", "item-dblclick", "item-contextmenu", "scroll"]);
 
-const canvas = ref(null);
+const viewportElement = ref(null);
 const viewport = reactive({
   scrollTop: 0,
   height: 0
 });
 
-const HEADER_HEIGHT = 42;
 const ROW_HEIGHT = 60;
 const OVERSCAN_ROWS = 8;
 const columns = "70px 70px minmax(160px, 1.55fr) minmax(72px, .6fr) minmax(120px, 1fr) minmax(180px, 1.6fr)";
 
-let scrollParent = null;
 let resizeObserver = null;
 let viewportRaf = 0;
 
-function findScrollParent(element) {
-  let parent = element?.parentElement || null;
-  while (parent) {
-    const styles = window.getComputedStyle(parent);
-    if (/(auto|scroll|overlay)/i.test(`${styles.overflowY} ${styles.overflow}`)) return parent;
-    parent = parent.parentElement;
-  }
-  return null;
-}
+defineExpose({
+  getScrollElement: () => viewportElement.value
+});
 
 function scheduleViewportUpdate() {
   if (viewportRaf) return;
@@ -45,43 +37,44 @@ function scheduleViewportUpdate() {
 }
 
 function updateViewport() {
-  if (!scrollParent) return;
-  viewport.scrollTop = scrollParent.scrollTop;
-  viewport.height = scrollParent.clientHeight;
+  if (!viewportElement.value) return;
+  viewport.scrollTop = viewportElement.value.scrollTop;
+  viewport.height = viewportElement.value.clientHeight;
 }
 
-const totalHeight = computed(() => HEADER_HEIGHT + props.rows.length * ROW_HEIGHT);
+const totalHeight = computed(() => props.rows.length * ROW_HEIGHT);
 const firstVisibleRow = computed(() => Math.max(
   0,
-  Math.floor(Math.max(0, viewport.scrollTop - HEADER_HEIGHT) / ROW_HEIGHT) - OVERSCAN_ROWS
+  Math.floor(Math.max(0, viewport.scrollTop) / ROW_HEIGHT) - OVERSCAN_ROWS
 ));
 const lastVisibleRow = computed(() => Math.min(
   props.rows.length,
-  Math.ceil(Math.max(0, viewport.scrollTop - HEADER_HEIGHT + viewport.height) / ROW_HEIGHT) + OVERSCAN_ROWS
+  Math.ceil(Math.max(0, viewport.scrollTop + viewport.height) / ROW_HEIGHT) + OVERSCAN_ROWS
 ));
 const visibleEntries = computed(() => props.rows.slice(firstVisibleRow.value, lastVisibleRow.value).map((row, index) => ({
   row,
   index: firstVisibleRow.value + index
 })));
-const offsetTop = computed(() => HEADER_HEIGHT + firstVisibleRow.value * ROW_HEIGHT);
+const offsetTop = computed(() => firstVisibleRow.value * ROW_HEIGHT);
 
 function isSelected(row) {
   if (props.selectedId == null) return false;
   return String(props.selectedId) === String(row?.id);
 }
 
-function handleScroll() {
+function handleScroll(event) {
+  emit("scroll", event);
   scheduleViewportUpdate();
 }
 
 function bindViewport() {
-  scrollParent = findScrollParent(canvas.value);
-  if (!scrollParent) return;
-  scrollParent.addEventListener("scroll", handleScroll, { passive: true });
+  const target = viewportElement.value;
+  if (!target) return;
+  target.addEventListener("scroll", handleScroll, { passive: true });
   resizeObserver = typeof ResizeObserver === "function"
     ? new ResizeObserver(scheduleViewportUpdate)
     : null;
-  resizeObserver?.observe(scrollParent);
+  resizeObserver?.observe(target);
   updateViewport();
 }
 
@@ -92,7 +85,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (viewportRaf) window.cancelAnimationFrame(viewportRaf);
-  scrollParent?.removeEventListener("scroll", handleScroll);
+  viewportElement.value?.removeEventListener("scroll", handleScroll);
   resizeObserver?.disconnect();
   window.removeEventListener("resize", scheduleViewportUpdate);
 });
@@ -107,11 +100,10 @@ watch(
 
 <template>
   <div
-    ref="canvas"
     class="item-table-virtual-canvas glass-surface--compact"
     role="table"
     aria-label="物品表格"
-    :style="{ height: `${Math.max(HEADER_HEIGHT, totalHeight)}px`, '--item-table-columns': columns }"
+    :style="{ '--item-table-columns': columns }"
   >
     <div class="item-table-virtual-header glass-surface--compact" role="row">
       <span role="columnheader">状态</span>
@@ -123,47 +115,60 @@ watch(
     </div>
 
     <div
-      class="item-table-virtual-body"
+      ref="viewportElement"
+      class="item-table-virtual-viewport"
       role="rowgroup"
-      :style="{ transform: `translateY(${offsetTop}px)` }"
     >
       <div
-        v-for="entry in visibleEntries"
-        :key="`${entry.row.sourceType}:${entry.row.id}`"
-        v-memo="[entry.row, isSelected(entry.row)]"
-        class="item-table-virtual-row"
-        :class="[
-          { selected: isSelected(entry.row), 'builtin-item-row': entry.row.isBuiltin },
-          props.badgeClass(entry.row.status)
-        ]"
-        role="row"
-        @click="emit('item-click', entry.row)"
-        @dblclick="emit('item-dblclick', entry.row)"
-        @contextmenu.prevent="emit('item-contextmenu', entry.row, $event)"
+        class="item-table-virtual-scroll-canvas"
+        :style="{ height: `${totalHeight}px` }"
       >
-        <span class="item-table-virtual-cell" role="cell">
-          <span class="badge" :class="props.badgeClass(entry.row.status)">{{ entry.row.status }}</span>
-        </span>
-        <span class="item-table-virtual-cell" role="cell">
-          <span class="item-thumb" :class="props.badgeClass(entry.row.status)">
-            <LazyThumbnail
-              v-if="entry.row.thumbnailUrl && (entry.row.isStudio || entry.row.status === 'ready' || props.isMapSceneItem(entry.row))"
-              :src="entry.row.thumbnailUrl"
-              :alt="entry.row.name + ' preview'"
-              :eager="entry.index < 24"
-            />
-            <span v-else>{{ entry.row.status === 'ready' ? (props.isMapSceneItem(entry.row) ? 'MAP' : 'PNG') : 'MISS' }}</span>
-          </span>
-        </span>
-          <span class="item-table-virtual-cell" role="cell"><span class="text-ellipsis">{{ entry.row.name }}</span></span>
-        <span class="item-table-virtual-cell" role="cell">{{ entry.row.kind }}</span>
-        <span class="item-table-virtual-cell" role="cell">{{ entry.row.author }}</span>
-        <span class="item-table-virtual-cell" role="cell">
-          <span class="item-source-cell">
-            <span class="text-ellipsis" :title="entry.row.sourceMod">{{ entry.row.sourceMod }}</span>
-          </span>
-        </span>
+        <div
+          class="item-table-virtual-body"
+          role="presentation"
+          :style="{ transform: `translateY(${offsetTop}px)` }"
+        >
+          <div
+            v-for="entry in visibleEntries"
+            :key="`${entry.row.sourceType}:${entry.row.id}`"
+            v-memo="[entry.row, isSelected(entry.row)]"
+            class="item-table-virtual-row"
+            :data-item-key="`${entry.row.sourceType || 'mod'}:${entry.row.id}`"
+            :class="[
+              { selected: isSelected(entry.row), 'builtin-item-row': entry.row.isBuiltin },
+              props.badgeClass(entry.row.status)
+            ]"
+            role="row"
+            @click="emit('item-click', entry.row)"
+            @dblclick="emit('item-dblclick', entry.row)"
+            @contextmenu.prevent="emit('item-contextmenu', entry.row, $event)"
+          >
+            <span class="item-table-virtual-cell" role="cell">
+              <span class="badge" :class="props.badgeClass(entry.row.status)">{{ entry.row.status }}</span>
+            </span>
+            <span class="item-table-virtual-cell" role="cell">
+              <span class="item-thumb" :class="props.badgeClass(entry.row.status)">
+                <LazyThumbnail
+                  v-if="entry.row.thumbnailUrl && (entry.row.isStudio || entry.row.status === 'ready' || props.isMapSceneItem(entry.row))"
+                  :src="entry.row.thumbnailUrl"
+                  :alt="entry.row.name + ' preview'"
+                  :eager="entry.index < 24"
+                />
+                <span v-else>{{ entry.row.status === 'ready' ? (props.isMapSceneItem(entry.row) ? 'MAP' : 'PNG') : 'MISS' }}</span>
+              </span>
+            </span>
+            <span class="item-table-virtual-cell" role="cell"><span class="text-ellipsis">{{ entry.row.name }}</span></span>
+            <span class="item-table-virtual-cell" role="cell">{{ entry.row.kind }}</span>
+            <span class="item-table-virtual-cell" role="cell">{{ entry.row.author }}</span>
+            <span class="item-table-virtual-cell" role="cell">
+              <span class="item-source-cell">
+                <span class="text-ellipsis" :title="entry.row.sourceMod">{{ entry.row.sourceMod }}</span>
+              </span>
+            </span>
+          </div>
+        </div>
       </div>
+      <slot />
     </div>
   </div>
 </template>

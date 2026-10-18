@@ -1,5 +1,6 @@
 import sys
 import sqlite3
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,12 @@ from star_manager.services.card_library import (  # noqa: E402
     resolve_dependency_records,
 )
 from star_manager.services.mod_database_core import init_db  # noqa: E402
+from star_manager.core.scene_card import STUDIO_SCENE_MARKER  # noqa: E402
+
+
+def _valid_scene_png() -> bytes:
+    png = b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 0) + b"IEND" + b"\xaeB`\x82"
+    return png + STUDIO_SCENE_MARKER.encode("utf-8")
 
 
 class SceneCardLibraryTests(unittest.TestCase):
@@ -31,8 +38,9 @@ class SceneCardLibraryTests(unittest.TestCase):
             first = scene / "室内" / "living-room.png"
             second = scene / "室外" / "garden.png"
             ordinary = scene / "室内" / "notes.txt"
-            first.write_bytes(b"scene")
-            second.write_bytes(b"scene")
+            first.write_bytes(_valid_scene_png())
+            second.write_bytes(_valid_scene_png())
+            (scene / "室内" / "character.png").write_bytes(b"not-a-scene-card")
             ordinary.write_text("ignore", encoding="utf-8")
 
             with patch("star_manager.services.card_library.is_hs2_game_dir", return_value=True):
@@ -51,24 +59,39 @@ class SceneCardLibraryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             game, scene = self.make_game(Path(temp_dir))
             card = scene / "室内" / "living-room.png"
-            card.write_bytes(b"scene")
+            card.write_bytes(_valid_scene_png())
 
             with patch("star_manager.services.card_library.is_hs2_game_dir", return_value=True):
                 result = get_scene_card_detail(str(game), "室内/living-room.png")
 
             self.assertTrue(result["ok"])
             self.assertEqual(result["card"]["relative_path"], "室内/living-room.png")
-            self.assertEqual(result["card"]["file_size"], len(b"scene"))
+            self.assertEqual(result["card"]["file_size"], len(_valid_scene_png()))
             self.assertIn("original=1", result["card"]["cover_url"])
 
             with self.assertRaises(ValueError):
                 resolve_scene_file(scene, "../coordinate/female/outfit.png")
 
+    def test_non_scene_png_is_not_listed_or_opened(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game, scene = self.make_game(Path(temp_dir))
+            card = scene / "室内" / "character.png"
+            card.write_bytes(b"not-a-scene-card")
+
+            with patch("star_manager.services.card_library.is_hs2_game_dir", return_value=True):
+                tree = build_scene_card_tree(str(game))
+                result = list_scene_cards(str(game), "室内")
+                detail = get_scene_card_detail(str(game), "室内/character.png")
+
+            self.assertEqual(tree["total"], 0)
+            self.assertEqual(result["cards"], [])
+            self.assertFalse(detail["ok"])
+
     def test_scene_detail_includes_resolved_scene_dependencies(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             game, scene = self.make_game(Path(temp_dir))
             card = scene / "室内" / "school-pool.png"
-            card.write_bytes(b"scene")
+            card.write_bytes(_valid_scene_png())
             parsed = {
                 "is_scene_card": True,
                 "scene_marker": "【StudioNEOV2】",

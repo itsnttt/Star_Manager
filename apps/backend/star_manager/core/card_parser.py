@@ -221,6 +221,16 @@ def extract_character_profile_from_card_data(card_data: bytes) -> dict[str, Any]
 
 def extract_auto_resolver_records_from_card(file_path: str) -> list[dict[str, Any]]:
     card_data = extract_png_extra_data(file_path)
+    return extract_auto_resolver_records_from_card_data(card_data)
+
+
+def extract_auto_resolver_records_from_card_data(card_data: bytes) -> list[dict[str, Any]]:
+    """Extract UAR records from already loaded AIS card bytes.
+
+    Studio scene cards embed complete character-card payloads after the PNG;
+    those payloads are not standalone PNG files, so they use this bytes-based
+    variant instead of the file wrapper above.
+    """
     if read_card_marker(card_data) not in AIS_CARD_MARKERS:
         return []
     block = get_card_block(card_data, "KKEx")

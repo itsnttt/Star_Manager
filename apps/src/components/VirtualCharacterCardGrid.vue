@@ -141,7 +141,7 @@ watch(
       <div
         v-for="entry in visibleEntries"
         :key="entry.row.id"
-        v-memo="[entry.row, isSelected(entry.row), props.favoriteTheme, props.bulkMode]"
+        v-memo="[entry.row, entry.row.missingModCount, isSelected(entry.row), props.favoriteTheme, props.bulkMode]"
         role="listitem"
         tabindex="0"
         class="char-card"
@@ -159,7 +159,7 @@ watch(
         @keydown.space.prevent="emit('card-click', entry.row)"
       >
         <span v-if="isSelected(entry.row)" class="check">✓</span>
-        <span v-if="entry.row.missingCount > 0" class="card-missing-badge">缺 {{ entry.row.missingCount }}</span>
+        <span v-if="entry.row.missingModCount > 0" class="card-missing-badge">缺 {{ entry.row.missingModCount }}</span>
         <span class="portrait">
           <LazyThumbnail
             :src="entry.row.thumbnailUrl"

@@ -26,7 +26,7 @@ namespace StarManager.GameItemProbe
     {
         public const string PluginGuid = "star.manager.gameitemprobe";
         public const string PluginName = "Star Manager Game Item Probe";
-        public const string PluginVersion = "0.9.5";
+        public const string PluginVersion = "0.9.6";
         private const float MinimumCurrentPollSeconds = 1f;
 
         private ConfigEntry<int> port;
@@ -2847,7 +2847,10 @@ namespace StarManager.GameItemProbe
                         $"categoryNo {category} is not a clothing category for character sex {character.sex}."
                     );
                 }
-                if (!HasListItem(listControl, category, localSlot))
+                // localSlot 0 is the native empty clothing entry. It is not
+                // always exposed by ChaListControl, but ChangeClothes uses it
+                // to clear the current coordinate part.
+                if (localSlot != 0 && !HasListItem(listControl, category, localSlot))
                 {
                     return ApplyResult.Failure(
                         "item_not_found",
@@ -2857,6 +2860,13 @@ namespace StarManager.GameItemProbe
 
                 try
                 {
+                    if (!SyncClothesCoordinateToCard(character, kind, localSlot, logger))
+                    {
+                        return ApplyResult.Failure(
+                            "execution_error",
+                            "The clothing was not written to the character-card coordinate."
+                        );
+                    }
                     character.ChangeClothes(kind, localSlot, false);
                     return ApplyResult.Success(localSlot);
                 }
@@ -2946,11 +2956,30 @@ namespace StarManager.GameItemProbe
 
             try
             {
+                string parentKey = command.ParentKey ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(parentKey))
+                {
+                    parentKey = ResolveAccessoryParentKey(listControl, category, localSlot);
+                }
+                if (!SyncAccessoryCoordinateToCard(
+                    character,
+                    command.AccessorySlotNo.Value,
+                    category,
+                    localSlot,
+                    parentKey,
+                    logger
+                ))
+                {
+                    return ApplyResult.Failure(
+                        "execution_error",
+                        "The accessory was not written to the character-card coordinate."
+                    );
+                }
                 character.ChangeAccessory(
                     command.AccessorySlotNo.Value,
                     category,
                     localSlot,
-                    command.ParentKey ?? string.Empty,
+                    parentKey,
                     false
                 );
                 return ApplyResult.Success(localSlot);
@@ -2959,6 +2988,113 @@ namespace StarManager.GameItemProbe
             {
                 logger.LogError($"ChangeAccessory failed: {exception}");
                 return ApplyResult.Failure("execution_error", exception.Message);
+            }
+        }
+
+        private static bool SyncClothesCoordinateToCard(
+            ChaControl character,
+            int kind,
+            int localSlot,
+            ManualLogSource logger
+        )
+        {
+            try
+            {
+                ChaFileControl card = character.chaFile;
+                if (card == null
+                    || card.coordinate == null
+                    || card.coordinate.clothes == null
+                    || card.coordinate.clothes.parts == null
+                    || kind < 0
+                    || kind >= card.coordinate.clothes.parts.Length)
+                {
+                    return false;
+                }
+
+                // Native ChangeClothes updates nowCoordinate inside its
+                // coroutine. Keep nowCoordinate untouched until that call so
+                // the native "already equipped" check still sees the old
+                // item, while the card snapshot is ready for an immediate
+                // native save.
+                card.coordinate.clothes.parts[kind].id = localSlot;
+                logger?.LogInfo(
+                    $"Synchronized clothing to card coordinate: kind={kind}, localSlot={localSlot}."
+                );
+                return true;
+            }
+            catch (Exception exception)
+            {
+                logger?.LogError($"Could not synchronize clothing to card coordinate: {exception}");
+                return false;
+            }
+        }
+
+        private static string ResolveAccessoryParentKey(
+            ChaListControl listControl,
+            int category,
+            int localSlot
+        )
+        {
+            try
+            {
+                ListInfoBase info = listControl?.GetListInfo(
+                    (ChaListDefine.CategoryNo)category,
+                    localSlot
+                );
+                // KeyType 76 is the ParentKey field used by the native
+                // ChangeAccessoryAsync implementation in the current HS2
+                // assembly. Keep an explicitly supplied parentKey untouched.
+                return info?.GetInfo((ChaListDefine.KeyType)76) ?? string.Empty;
+            }
+            catch (Exception)
+            {
+                return string.Empty;
+            }
+        }
+
+        private static bool SyncAccessoryCoordinateToCard(
+            ChaControl character,
+            int slotNo,
+            int category,
+            int localSlot,
+            string parentKey,
+            ManualLogSource logger
+        )
+        {
+            try
+            {
+                ChaFileControl card = character.chaFile;
+                if (card == null
+                    || card.coordinate == null
+                    || card.coordinate.accessory == null
+                    || card.coordinate.accessory.parts == null
+                    || slotNo < 0
+                    || slotNo >= card.coordinate.accessory.parts.Length)
+                {
+                    return false;
+                }
+
+                // Leave nowCoordinate untouched until ChangeAccessoryAsync
+                // runs: its forceChange=false path compares the old runtime
+                // item before deciding whether a reload is necessary.
+                var part = card.coordinate.accessory.parts[slotNo];
+                if (part == null)
+                {
+                    return false;
+                }
+                part.type = category;
+                part.id = localSlot;
+                part.parentKey = parentKey ?? string.Empty;
+                logger?.LogInfo(
+                    $"Synchronized accessory to card coordinate: slotNo={slotNo}, "
+                        + $"category={category}, localSlot={localSlot}."
+                );
+                return true;
+            }
+            catch (Exception exception)
+            {
+                logger?.LogError($"Could not synchronize accessory to card coordinate: {exception}");
+                return false;
             }
         }
 
